@@ -121,13 +121,19 @@ app.post('/api/contact', limiter, async (req, res) => {
     });
     return res.json({ ok: true });
   } catch (err) {
-    console.error('Send failed:', {
-  message: err?.message,
-  code: err?.code,
-  command: err?.command,
-  responseCode: err?.responseCode,
-  response: err?.response
-});
+  console.error('Send failed:', err);
+
+  return res.status(502).json({
+    ok: false,
+    error: 'Email send failed',
+    diagnostic: {
+      code: err?.code || 'NO_CODE',
+      command: err?.command || 'NO_COMMAND',
+      responseCode: err?.responseCode || 'NO_RESPONSE_CODE',
+      message: err?.message || 'NO_MESSAGE'
+    }
+  });
+}
     return res.status(502).json({ ok: false, error: 'We could not send your message. Please call 917-608-3201.' });
   }
 });
