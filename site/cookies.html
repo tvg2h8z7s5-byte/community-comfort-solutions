@@ -1,0 +1,33 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Manage Cookies | Community Comfort Solutions</title><meta name="robots" content="index"><link rel="icon" type="image/svg+xml" href="assets/logo-mark.svg"><link rel="stylesheet" href="styles.css"></head><body>
+<header class="site-header"><div class="container nav-wrap"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true"><span></span></span><span><strong>COMMUNITY</strong><small>COMFORT SOLUTIONS</small></span></a><nav class="desktop-nav"><a class="" href="index.html">Home</a><a class="" href="services.html">Services</a><a class="" href="maintenance.html">Maintenance</a><a class="" href="about.html">About</a><a class="" href="service-areas.html">Service Areas</a><a href="contact.html">Contact</a></nav><div class="header-actions"><a class="phone" href="tel:+19176083201">☎ <span>917-608-3201</span></a><a class="btn btn-primary" href="schedule.html">Schedule Service</a></div><button class="menu-toggle" aria-label="Open menu" aria-expanded="false">☰</button></div><nav class="mobile-nav"><a href="index.html">Home</a><a href="services.html">Services</a><a href="maintenance.html">Maintenance</a><a href="about.html">About</a><a href="service-areas.html">Service Areas</a><a href="contact.html">Contact</a><a class="btn btn-primary" href="schedule.html">Schedule Service</a></nav></header>
+
+<main><section class="page-hero"><div class="container"><h1>Manage Cookies</h1></div></section><section class="content-section"><div class="container legal"><p><em>Last updated: September 2026. Have this reviewed before relying on it.</em></p>
+<p>This website does not currently use advertising or analytics cookies. Our website host and form provider may set or use technical data that is necessary to deliver the site and to send your messages to us.</p>
+<p>If we add optional cookies in the future (for example, visitor analytics), we will only use them according to the preference you choose here. Your choice is stored in your browser on this device only.</p>
+<fieldset style="border:1px solid #cfe0ec;border-radius:8px;padding:16px;margin:18px 0"><legend><strong>Cookie preference</strong></legend>
+<label style="display:block;margin:6px 0"><input type="radio" name="cookiepref" value="essential" checked> Essential only (default)</label>
+<label style="display:block;margin:6px 0"><input type="radio" name="cookiepref" value="all"> Also allow optional cookies, if added in the future</label>
+<p style="margin:14px 0 0"><button class="btn btn-primary" type="button" id="cookie-save">Save preference</button> <button class="btn btn-plain" type="button" id="cookie-reset">Reset</button></p>
+<p id="cookie-current" role="status" aria-live="polite" class="note"></p></fieldset>
+<p>Questions? Email <a href="mailto:contact@communitycomfortsolutions.org">contact@communitycomfortsolutions.org</a>. See our <a href="privacy.html">Privacy Policy</a>.</p>
+</div></section></main>
+<footer class="site-footer"><div class="container footer-grid"><div><a class="brand footer-brand" href="index.html"><span class="brand-mark" aria-hidden="true"><span></span></span><span><strong>COMMUNITY</strong><small>COMFORT SOLUTIONS</small></span></a><p>Heating &amp; Cooling Service | Central New Jersey</p></div><div><h4>Explore</h4><a href="services.html">Services</a><a href="maintenance.html">Maintenance</a><a href="about.html">About</a><a href="service-areas.html">Service Areas</a><a href="contact.html">Contact</a></div><div class="footer-contact"><h4>Call for Service</h4><a href="tel:+19176083201">917-608-3201</a><p><a href="mailto:contact@communitycomfortsolutions.org">contact@communitycomfortsolutions.org</a></p><p>Serving Central New Jersey</p></div></div><div class="container copyright"><div class="footer-legal"><span>© 2026 Community Comfort Solutions</span><nav aria-label="Footer navigation"><a href="terms.html">Terms</a><a href="privacy.html">Privacy</a><a href="security.html">Security</a><a href="status.html">Status</a><a href="community.html">Community</a><a href="resources.html">Resources</a><a href="contact.html">Contact</a><a href="cookies.html">Manage cookies</a><a href="do-not-share.html">Do not share my personal information</a></nav></div></div></footer><div class="call-bar"><a href="tel:+19176083201">☎ Call Now</a><a href="schedule.html">Schedule Service</a></div><script src="script.js"></script><script>
+(function(){
+  var KEY='ccs-cookie-pref',out=document.getElementById('cookie-current');
+  function get(){try{return localStorage.getItem(KEY)}catch(e){return null}}
+  function show(){var v=get();out.textContent=v==='all'?'Your saved choice: allow optional cookies if we add them.':'Your saved choice: essential only (default).';}
+  document.querySelectorAll('input[name=cookiepref]').forEach(function(r){
+    if((get()||'essential')===r.value)r.checked=true;
+  });
+  document.getElementById('cookie-save').addEventListener('click',function(){
+    var v=document.querySelector('input[name=cookiepref]:checked').value;
+    try{localStorage.setItem(KEY,v)}catch(e){}
+    show();
+  });
+  document.getElementById('cookie-reset').addEventListener('click',function(){
+    try{localStorage.removeItem(KEY)}catch(e){}
+    document.querySelector('input[name=cookiepref][value=essential]').checked=true;show();
+  });
+  show();
+})();
+</script></body></html>

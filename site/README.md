@@ -1,10 +1,33 @@
 # Community Comfort Solutions website
 
-Static site, no server needed. Setup order:
+Static site (`site/`) plus a small form-to-email backend (`backend/`) for your VPS.
 
-1. **Contact form**: create a free account at formspree.io, make a form, and replace `YOUR_FORM_ID` in `contact.html` with your form ID. Submissions email you. Send a test.
-2. **Domain**: search-and-replace `https://www.YOURDOMAIN.com` in `index.html`, `sitemap.xml`, `robots.txt` with your real domain.
-3. **Hosting**: upload this folder to Netlify, Cloudflare Pages, or GitHub Pages (all free, HTTPS included), then connect your domain. `404.html` is used automatically.
-4. **Google**: claim a Google Business Profile, submit `sitemap.xml` in Google Search Console.
-5. **Content**: confirm service days on `contact.html`, replace photo placeholders, have the privacy/terms text reviewed.
-6. **Legal**: confirm NJ HVAC licensing and home improvement contractor registration requirements, and put license numbers in the footer.
+## Deploy on your VPS (Ubuntu/Debian + nginx)
+
+1. **Site files**: copy the contents of `site/` to `/var/www/communitycomfortsolutions.org/`.
+2. **Backend**: copy `backend/` to `/opt/ccs-forms/`, then:
+   ```
+   cd /opt/ccs-forms
+   npm install --omit=dev
+   cp .env.example .env && nano .env      # fill in your SMTP details
+   chmod 600 .env && chown -R www-data:www-data /opt/ccs-forms
+   ```
+3. **Run it as a service**:
+   ```
+   sudo cp ccs-forms.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now ccs-forms
+   ```
+4. **nginx**: use `backend/nginx-site.conf` as your site config (it serves the site and proxies `/api/` to the backend), then
+   `sudo nginx -t && sudo systemctl reload nginx` and `sudo certbot --nginx -d communitycomfortsolutions.org -d www.communitycomfortsolutions.org` for HTTPS.
+5. **Test**: `curl https://communitycomfortsolutions.org/api/health` should return `{"ok":true}`, then submit the contact form.
+
+Forms on `contact.html`, `schedule.html` and `do-not-share.html` post to `/api/contact`; messages are emailed to `contact@communitycomfortsolutions.org`.
+
+## Email sending notes
+
+Use authenticated SMTP (port 587) from a real mailbox or a transactional provider (Brevo, Resend, Mailgun, Postmark). Many VPS hosts block port 25, and sending straight from the VPS usually lands in spam unless SPF, DKIM, DMARC and reverse DNS are all set up. Make sure your domain's SPF/DKIM records include whichever provider you use.
+
+## Content to finish
+
+- Confirm service days and hours on `contact.html`, replace photo placeholders, and have the privacy/terms/cookie text reviewed.
+- Domain is set to `https://communitycomfortsolutions.org/` in `index.html`, `sitemap.xml` and `robots.txt`.
