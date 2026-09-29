@@ -85,7 +85,7 @@ const limiter = rateLimit({
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.post('/api/contact', limiter, async (req, res) => {
+app.post('/api/contact', limiter, upload.none(), async (req, res) => {
   // Reject cross-site posts from other origins (browsers always send Origin on POST)
   const origin = req.get('origin');
   if (origin && !origins.includes(origin)) {
