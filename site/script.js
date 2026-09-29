@@ -1,11 +1,18 @@
 const toggle=document.querySelector('.menu-toggle');
 const mobile=document.querySelector('.mobile-nav');
-if(toggle){
-  toggle.addEventListener('click',()=>{
-    const open=mobile.classList.toggle('open');
+if(toggle && mobile){
+  const setOpen=open=>{
+    mobile.classList.toggle('open',open);
     toggle.setAttribute('aria-expanded',String(open));
+    toggle.setAttribute('aria-label',open?'Close menu':'Open menu');
     toggle.textContent=open?'✕':'☰';
+  };
+  toggle.addEventListener('click',()=>setOpen(!mobile.classList.contains('open')));
+  mobile.addEventListener('click',e=>{if(e.target.closest('a'))setOpen(false);});
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape' && mobile.classList.contains('open')){setOpen(false);toggle.focus();}
   });
+  window.matchMedia('(min-width:1191px)').addEventListener('change',e=>{if(e.matches)setOpen(false);});
 }
 
 const CONTACT_EMAIL='contact@communitycomfortsolutions.org';
@@ -25,29 +32,39 @@ if(form){
   };
   const fallback=(msg)=>{
     status.className='err';
-    status.innerHTML=(msg||'We could not send this automatically.')+' <a href="'+mailtoFor()+'">Click here to email us instead</a>, or call <a href="tel:+19176083201">'+PHONE_DISPLAY+'</a>.';
+    const emailLink=document.createElement('a');
+    emailLink.href=mailtoFor();emailLink.textContent='Click here to email us instead';
+    const phoneLink=document.createElement('a');
+    phoneLink.href='tel:+19176083201';phoneLink.textContent=PHONE_DISPLAY;
+    status.replaceChildren(msg||'We could not send this automatically.',' ',emailLink,', or call ',phoneLink,'.');
   };
 
   form.addEventListener('submit',async e=>{
     e.preventDefault();
+    if(!form.reportValidity())return;
     const btn=form.querySelector('button[type=submit]');
     btn.disabled=true;status.className='';status.textContent='Sending...';
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),30000);
     try{
       const r=await fetch(form.getAttribute('action'),{
         method:'POST',
+        signal:controller.signal,
         body:new URLSearchParams(new FormData(form)),
         headers:{Accept:'application/json'}
       });
       let j={};try{j=await r.json();}catch(_){}
       if(!r.ok||!j.ok){
-        if(r.status===400&&j.error){status.className='err';status.textContent=j.error;btn.disabled=false;return;}
+        if((r.status===400||r.status===413||r.status===429)&&j.error){status.className='err';status.textContent=j.error;btn.disabled=false;return;}
         throw new Error();
       }
       form.reset();status.className='ok';
       status.textContent='Thank you! We received your request and will get back to you soon. For urgent issues, call '+PHONE_DISPLAY+'.';
     }catch(err){
       fallback();
+    }finally{
+      clearTimeout(timeout);
+      btn.disabled=false;
     }
-    btn.disabled=false;
   });
 }
