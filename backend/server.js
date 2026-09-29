@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
+const SITE_DIR = path.join(__dirname, '..', 'site');
 
 // --- tiny .env loader (no extra dependency) ---
 try {
@@ -65,6 +66,7 @@ const validEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
 const origins = ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
 
 const app = express();
+app.use(express.static(SITE_DIR));
 app.set('trust proxy', 1); // running behind nginx
 app.disable('x-powered-by');
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
