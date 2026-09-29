@@ -121,7 +121,13 @@ app.post('/api/contact', limiter, async (req, res) => {
     });
     return res.json({ ok: true });
   } catch (err) {
-    console.error('Send failed:', err && err.message);
+    console.error('Send failed:', {
+  message: err?.message,
+  code: err?.code,
+  command: err?.command,
+  responseCode: err?.responseCode,
+  response: err?.response
+});
     return res.status(502).json({ ok: false, error: 'We could not send your message. Please call 917-608-3201.' });
   }
 });
