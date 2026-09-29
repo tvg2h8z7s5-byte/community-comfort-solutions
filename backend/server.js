@@ -133,8 +133,6 @@ app.post('/api/contact', limiter, async (req, res) => {
       message: err?.message || 'NO_MESSAGE'
     }
   });
-}
-    return res.status(502).json({ ok: false, error: 'We could not send your message. Please call 917-608-3201.' });
   }
 });
 
