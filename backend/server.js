@@ -124,4 +124,4 @@ app.post('/api/contact', limiter, async (req, res) => {
   }
 });
 
-app.listen(Number(PORT), '127.0.0.1', () => console.log(`Form backend listening on 127.0.0.1:${PORT}`));
+app.listen(Number(PORT), '0.0.0.0', () => console.log(`Form backend listening on 0.0.0.0:${PORT}`));
