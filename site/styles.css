@@ -1,3 +1,8 @@
+
+
+
+    
+  
 :root{--navy:#10375f;--blue:#0878c9;--blue-dark:#075fa1;--sky:#eaf6ff;--sky2:#d8efff;--text:#173552;--muted:#5d7286;--white:#fff;--border:#dce8f0;--shadow:0 10px 28px rgba(16,55,95,.09);--radius:10px}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);line-height:1.6;background:#fff}a{color:inherit;text-decoration:none}.container{width:min(1180px,calc(100% - 40px));margin:auto}
 .site-header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.97);border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}.nav-wrap{min-height:74px;display:flex;align-items:center;gap:28px}.brand{display:flex;align-items:center;gap:10px;line-height:1;color:var(--navy);min-width:max-content}.brand strong{display:block;font-size:16px;letter-spacing:.03em}.brand small{display:block;font-size:9px;letter-spacing:.12em;margin-top:4px}.brand-mark{width:38px;height:32px;border:4px solid var(--blue);border-top:0;display:block;position:relative;clip-path:polygon(0 28%,50% 0,100% 28%,100% 100%,0 100%)}.brand-mark:before{content:"";position:absolute;width:18px;height:18px;border:3px solid var(--navy);left:6px;top:9px;border-radius:3px}.brand-mark span{position:absolute;width:7px;height:7px;background:var(--blue);left:13px;top:15px;border-radius:50%}
@@ -17,10 +22,31 @@
 @media(max-width:800px){.call-bar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--navy);box-shadow:0 -2px 10px rgba(0,0,0,.2)}.call-bar a{flex:1;text-align:center;color:#fff;font-weight:750;font-size:14px;padding:14px}.call-bar a:first-child{background:var(--blue)}body{padding-bottom:50px}}
 
 .footer-legal{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;justify-content:space-between}.footer-legal nav{display:flex;flex-wrap:wrap;gap:6px 16px}.site-footer .footer-legal a{display:inline!important;margin:0!important;font-size:12px!important;color:#d9e8f4}.site-footer .footer-legal a:hover{text-decoration:underline}.btn-plain{border-color:var(--navy);background:#fff;color:var(--navy)}
-.brand-logo {
-  display: block;
-  width: auto;
-  height: 52px;
-  max-width: 220px;
-  object-fit: contain;
+
+/* CCS logo */
+.brand-logo{
+  display:block;
+  width:auto;
+  height:52px;
+  max-width:220px;
+  object-fit:contain;
 }
+
+/* Footer logo */
+.footer-brand .brand-logo{
+  height:58px;
+  max-width:240px;
+}
+
+/* Keep logo proportional on smaller screens */
+@media(max-width:800px){
+  .brand-logo{
+    height:46px;
+    max-width:190px;
+  }
+  .footer-brand .brand-logo{
+    height:52px;
+    max-width:210px;
+  }
+}
+
