@@ -2,6 +2,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const SITE_DIR = path.join(__dirname, '..', 'site');
@@ -66,6 +67,8 @@ const validEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
 const origins = ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
 
 const app = express();
+const upload = multer();
+
 app.use(express.static(SITE_DIR));
 app.set('trust proxy', 1); // running behind nginx
 app.disable('x-powered-by');
