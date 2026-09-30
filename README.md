@@ -58,3 +58,23 @@ legacy direct nginx/systemd deployment guidance. They are retained, but are not
 the documented GitHub → Coolify → Docker deployment path.
 
 See `PUBLIC_SITE_REVIEW.md` for findings and decisions before authentication.
+
+## Cloudflare and form rate limits
+
+`backend/client-ip.js` selects a visitor-specific key for the contact limiter.
+It accepts a valid `CF-Connecting-IP` only when the upstream address is in the
+checked-in Cloudflare ranges. With the current private Docker/Traefik path,
+the existing one-hop Express setting provides the upstream address; direct
+public connections cannot enable Cloudflare-header trust using a forged
+forwarded address. Missing, malformed or unverified headers fall back to the
+existing request IP. IPv6 representations are normalized, including Cloudflare
+Pseudo IPv4 overwrite mode. The threshold remains six requests in 15 minutes.
+
+This assumes the private Docker network is controlled by the operator and the
+proxy sanitizes forwarded headers from untrusted sources. Do not enable
+Traefik's unrestricted forwarding trust. Revisit this design if another proxy,
+Worker, Tunnel or publicly mapped application port is introduced. It is a form
+abuse measure, not authentication or authorization. IPv6 subnet-based abuse
+limits are not added in this patch. Review `backend/cloudflare-networks.json`
+against its official source URLs during maintenance. No visitor addresses are
+logged or persisted by this helper.

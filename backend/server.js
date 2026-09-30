@@ -6,6 +6,7 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('node:crypto');
+const { contactClientIP } = require('./client-ip');
 const SITE_DIR = path.join(__dirname, '..', 'site');
 
 // --- tiny .env loader (no extra dependency) ---
@@ -107,6 +108,7 @@ const limiter = rateLimit({
   limit: 6,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: contactClientIP,
   message: { ok: false, error: 'Too many requests. Please call 917-608-3201.' },
 });
 

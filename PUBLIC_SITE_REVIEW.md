@@ -115,3 +115,42 @@ email submissions, database changes, or authentication work were performed.
 
 The current public forms remain email requests requiring confirmation; they do
 not reserve calendar appointments or persist customer records.
+
+## Live verification and Cloudflare follow-up
+
+On September 29, 2026, after the owner deployed the initial changes, both public
+forms returned success and the owner confirmed both test emails arrived. Docker
+output subsequently showed the website and `coolify-proxy` running, with the
+proxy healthy; the Coolify UI's Exited badge did not match that output. The
+displayed duplicate-router log predated the deployment and was not evidence of
+a continuing conflict. The browser-based administrative terminal had a separate
+WebSocket failure; no changes were made to repair it.
+
+The live response contains Cloudflare headers. Read-only checks did not find
+explicit forwarded-header/proxy-protocol settings in container command flags,
+selected environment variables, or YAML/TOML under the standard proxy directory.
+Those checks do not prove that every possible configuration source was examined
+or that live requests were previously grouped incorrectly.
+
+A follow-up backend-only patch prepares Cloudflare-aware rate-limit keys without
+changing the proxy, hosting settings, SMTP, form contract or rate threshold.
+It checks Cloudflare address ranges, requires a private immediate peer before
+considering Traefik's upstream result, validates and normalizes visitor IPs,
+and conservatively falls back when those checks fail. It retains `trust proxy=1`.
+The design assumes Traefik's normal sanitization and the operator-controlled
+private Docker network shown in the deployment. Cloudflare Workers, header
+transforms, additional proxies and direct application exposure need separate
+review if present.
+
+All 12 local backend tests pass, including synthetic visitors sharing an edge,
+the same visitor moving between edges, invalid or spoofed Cloudflare headers,
+IPv4/IPv6 normalization, and SMTP compatibility. The patch has not been uploaded
+or deployed by the assistant. Its live visitor-key selection remains unverified;
+successful form delivery alone does not prove which limiter key was selected.
+
+Follow-up files: `backend/server.js`, `backend/package.json`,
+`backend/client-ip.js`, `backend/cloudflare-networks.json`,
+`tests/public-backend.test.js`, `tests/client-ip.test.js`, `README.md`, and this
+review. The Cloudflare networks are from https://www.cloudflare.com/ips-v4/ and
+https://www.cloudflare.com/ips-v6/ . Header behavior is documented at
+https://developers.cloudflare.com/fundamentals/reference/http-headers/ .

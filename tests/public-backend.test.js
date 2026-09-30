@@ -76,6 +76,24 @@ test('contact rate limit preserves the existing six requests per window', async 
   });
 });
 
+test('Cloudflare visitors have independent limits and changing edges does not reset them', async () => {
+  await withApp({sendMail:async()=>{}}, async base => {
+    const headers = {'X-Forwarded-For':'172.64.0.1','CF-Connecting-IP':'192.0.2.10'};
+    for (let i=0;i<6;i++) assert.equal((await post(base,{_gotcha:'bot'},headers)).status,200);
+    assert.equal((await post(base,{_gotcha:'bot'},{...headers,'X-Forwarded-For':'104.16.0.1'})).status,429);
+    assert.equal((await post(base,{_gotcha:'bot'},{...headers,'CF-Connecting-IP':'192.0.2.11'})).status,200);
+  });
+});
+
+test('unverified Cloudflare headers cannot rotate the rate limit key', async () => {
+  await withApp({sendMail:async()=>{}}, async base => {
+    for (let i=0;i<7;i++) {
+      const response=await post(base,{_gotcha:'bot'},{'X-Forwarded-For':'198.51.100.1','CF-Connecting-IP':`192.0.2.${i+1}`});
+      assert.equal(response.status,i<6?200:429);
+    }
+  });
+});
+
 test('upgraded Nodemailer delivers the form through a local SMTP test server', async () => {
   const net = require('node:net');
   const { createRequire } = require('node:module');

@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test ../tests/public-backend.test.js"
+    "test": "node --test ../tests/public-backend.test.js ../tests/client-ip.test.js"
   },
   "engines": {
     "node": ">=20"
