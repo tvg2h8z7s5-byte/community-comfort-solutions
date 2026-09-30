@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test ../tests/public-backend.test.js ../tests/client-ip.test.js"
+    "test": "node --test ../tests/public-backend.test.js ../tests/client-ip.test.js ../tests/accounts.test.js",
+    "accounts:migrate": "node accounts/migrate.js --apply",
+    "accounts:cleanup": "node accounts/migrate.js --cleanup"
   },
   "engines": {
     "node": ">=20"
@@ -15,6 +17,10 @@
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "multer": "^2.0.2",
-    "nodemailer": "10.0.12"
+    "nodemailer": "10.0.12",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8"
   }
 }

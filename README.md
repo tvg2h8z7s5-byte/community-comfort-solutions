@@ -4,6 +4,14 @@ The public website uses static HTML/CSS/JavaScript in `site/` and Express in
 `backend/`. The existing Docker image serves both the website and `/api/contact`.
 Forms email requests using SMTP; they do not create customer database records.
 
+## Customer account foundation
+
+The PostgreSQL account backend is implemented locally and remains disabled by
+default. See [account backend setup and release checks](backend/accounts/README.md)
+and [the approved foundation plan](ACCOUNT_FOUNDATION_PLAN.md). No live business
+database, signup/login screens or customer portal have been provisioned by this
+change. Keep `AUTH_ENABLED` unset or `false` until those release checks are met.
+
 ## Edit shared navigation
 
 Edit `partials/header.html`, `partials/footer.html`, or `partials/call-bar.html`,

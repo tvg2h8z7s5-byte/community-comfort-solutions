@@ -80,7 +80,7 @@ const scriptHashes = [...new Set(fs.readdirSync(SITE_DIR).filter(f => f.endsWith
     .map(match => "'sha256-" + crypto.createHash('sha256').update(match[1]).digest('base64') + "'");
 }))];
 
-function createApp(mailTransport = transporter, allowedOrigins = origins) {
+function createApp(mailTransport = transporter, allowedOrigins = origins, accountOptions = null) {
 const app = express();
 const upload = multer({ limits: { fieldNameSize: 100, fieldSize: 16000, fields: 16, parts: 16, files: 0 } });
 // Preserve the deployed proxy assumption; confirm topology before changing it.
@@ -100,6 +100,11 @@ app.use((_req, res, next) => {
   });
   next();
 });
+// Disabled unless explicitly configured. Mount before public files/catch-all routes.
+if (accountOptions) {
+  const { createAccountRouter } = require('./accounts/router');
+  app.use('/api/account', createAccountRouter({ ...accountOptions, mailTransport, from: SMTP_FROM }));
+}
 app.get('/404.html', (_req, res) => res.status(404).sendFile(path.join(SITE_DIR, '404.html')));
 app.use(express.static(SITE_DIR, { dotfiles: 'deny' }));
 
@@ -194,8 +199,41 @@ if (require.main === module) {
     console.error('Invalid port or SMTP secure configuration.');
     process.exit(1);
   }
-  const server = createApp().listen(Number(PORT), '0.0.0.0', () => console.log('Public backend listening.'));
-  server.requestTimeout = 30000;
-  server.headersTimeout = 15000;
+  (async () => {
+    const { accountConfig } = require('./accounts/config');
+    const config = accountConfig();
+    let db;
+    if (config) {
+      db = require('./accounts/database').createDatabase(config.connectionString);
+      // Fail closed if the explicitly migrated schema is unavailable.
+      await db.query('SELECT id FROM customer_accounts LIMIT 0');
+      await db.query('SELECT token_hash FROM account_tokens LIMIT 0');
+      await db.query('SELECT session_hash FROM account_sessions LIMIT 0');
+      await db.query('SELECT id FROM customer_addresses LIMIT 0');
+      await db.query('SELECT key_hash FROM account_rate_limits LIMIT 0');
+    }
+    const server = createApp(transporter, origins, config ? { ...config, db } : null)
+      .listen(Number(PORT), '0.0.0.0', () => console.log('Public backend listening.'));
+    server.requestTimeout = 30000;
+    server.headersTimeout = 15000;
+    let stopping = false;
+    function stop() {
+      if (stopping) return;
+      stopping = true;
+      const timeout = setTimeout(() => process.exit(1), 10000);
+      timeout.unref();
+      server.close(async () => {
+        if (db) await db.close().catch(() => {});
+        clearTimeout(timeout);
+        process.exit(0);
+      });
+    }
+    process.on('SIGTERM', stop);
+    process.on('SIGINT', stop);
+  })().catch(() => {
+    // Connection strings and configuration parsing errors can contain secrets.
+    console.error('Backend startup failed. Check account configuration and migrations.');
+    process.exit(1);
+  });
 }
 module.exports = { createApp };

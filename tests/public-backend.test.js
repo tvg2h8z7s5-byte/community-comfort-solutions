@@ -28,6 +28,8 @@ test('pages, 404 status and headers cover static and API responses', async () =>
     const response = await fetch(base + '/api/missing');
     assert.equal(response.status, 404);
     assert.deepEqual(await response.json(), { ok: false, error: 'Not found.' });
+    assert.equal((await fetch(base + '/api/account/session')).status, 404);
+    assert.equal((await fetch(base + '/api/account/register', { method: 'POST' })).status, 404);
   });
 });
 test('form email contract, honeypot and hostile input', async () => {
