@@ -104,7 +104,7 @@ HTTPS is required. All writes require an exact configured Origin and JSON body
 For signed-in writes, send `X-CSRF-Token` from login or `/session`. The frontend
 must not store the session identifier in localStorage: the host-only
 `__Host-ccs_session` cookie is Secure, HttpOnly, SameSite=Lax and Path=/.
-Sessions have an eight-hour absolute lifetime and thirty-minute idle timeout.
+Sessions have a thirty-day absolute lifetime and seven-day idle timeout. Signing out, password reset, suspension, and role changes revoke access. Public navigation reads the server session without storing account details in localStorage.
 Passwords are not trimmed or silently truncated; 15–128 Unicode characters are
 accepted, with a 512-byte ceiling. Scrypt uses N=131072, r=8, p=1, random salts
 and constant-time comparison. One password operation per process is permitted;

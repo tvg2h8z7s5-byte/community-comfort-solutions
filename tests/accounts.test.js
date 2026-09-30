@@ -116,7 +116,7 @@ test('read-only connection check accepts the runtime role and rejects administra
   });
 });
 test('registration, verification, session security, profile ownership, recovery and logout work together', async () => {
-  await withAccounts(async ({ db, request, register, login, messages, latestToken }) => {
+  await withAccounts(async ({ db, request, register, login, messages, latestToken, base }) => {
     const verification = await register('Alice@Example.test');
     assert.match(messages.at(-1).html, /Welcome! Verify your email/);
     assert.match(messages.at(-1).html, /expires in 24 hours/);
@@ -134,6 +134,16 @@ test('registration, verification, session security, profile ownership, recovery 
     const alice = await login(row.email);
     assert.match(alice.header, /Secure/); assert.match(alice.header, /HttpOnly/); assert.match(alice.header, /SameSite=Lax/); assert.match(alice.header, /Path=\//);
     assert.doesNotMatch(alice.header, /Domain=/);
+    assert.match(alice.header, /Max-Age=2592000/);
+    await db.query("UPDATE account_sessions SET last_seen_at=now()-interval '2 days' WHERE account_id=$1",[row.id]);
+    assert.equal((await request('session',undefined,{headers:{Cookie:alice.cookie}})).status,200);
+    for(const page of ['login','register']) {
+      const response=await fetch(base+'/account/'+page,{redirect:'manual',headers:{Cookie:alice.cookie,'X-Forwarded-Proto':'https'}});
+      assert.equal(response.status,302);assert.equal(response.headers.get('location'),'/account/dashboard');
+    }
+    const alias=await fetch(base+'/',{redirect:'manual',headers:{'X-Forwarded-Host':'www.'+new URL(ORIGIN).hostname}});
+    assert.equal(alias.status,308);assert.equal(alias.headers.get('location'),ORIGIN+'/');
+
     const auth = { Cookie: alice.cookie, 'X-CSRF-Token': alice.csrf };
     const session = await request('session', undefined, { headers: auth });
     assert.equal(session.status, 200); assert.equal(session.headers.get('cache-control'), 'private, no-store');
@@ -182,7 +192,7 @@ test('expired links/sessions, suspended accounts, hostile requests and persisted
     assert.equal((await request('verify-email', { token: verify })).status, 400);
     await db.query('UPDATE customer_accounts SET verified_at=now()');
     const session = await login('expiry@example.test');
-    await db.query("UPDATE account_sessions SET last_seen_at=now()-interval '31 minutes'");
+    await db.query("UPDATE account_sessions SET last_seen_at=now()-interval '8 days'");
     assert.equal((await request('session', undefined, { headers: { Cookie: session.cookie } })).status, 401);
     await db.query("UPDATE customer_accounts SET state='suspended'");
     assert.equal((await request('login', { email: 'expiry@example.test', password: PASSWORD })).status, 401);

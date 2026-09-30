@@ -5,7 +5,7 @@ const { contactClientIP } = require('../client-ip');
 const security = require('./crypto');
 const { accountEmail, receiptEmail } = require('../emails');
 const COOKIE = '__Host-ccs_session';
-const SESSION_SECONDS = 8 * 60 * 60;
+const { SESSION_SECONDS, IDLE_SECONDS } = require('./session-policy');
 const GENERIC = { ok: true, message: 'If eligible, you will receive an email with the next step.' };
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
 function fail(status, message) { const err = new Error(message); err.status = status; throw err; }
@@ -80,9 +80,9 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     if (!raw) fail(401, 'Please sign in.');
     const result = await db.query(`UPDATE account_sessions s SET last_seen_at=now()
       FROM customer_accounts a WHERE s.account_id=a.id AND s.session_hash=$1
-      AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes'
+      AND s.expires_at>now() AND s.last_seen_at>now()-$2 * interval '1 second'
       AND a.verified_at IS NOT NULL AND a.state='active'
-      RETURNING a.id,a.email,a.name,a.phone,a.role`, [security.tokenHash(raw)]);
+      RETURNING a.id,a.email,a.name,a.phone,a.role`, [security.tokenHash(raw), IDLE_SECONDS]);
     if (!result.rows.length) fail(401, 'Please sign in.');
     if (!['GET', 'HEAD'].includes(req.method) && !security.equalToken(req.get('x-csrf-token'), csrf(raw))) fail(403, 'Invalid request.');
     return { account: result.rows[0], raw };
@@ -224,6 +224,12 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
   } });
   const pages = express.Router();
   pages.use((req,res,next)=> { if(!req.secure) return res.status(403).send('HTTPS is required.'); res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'}); next(); });
+  pages.get(['/login','/register'], asyncRoute(async(req,res)=> {
+    let account;
+    try { ({account}=await authenticated(req)); }
+    catch(err) { if(err.status===401) return res.sendFile(require('node:path').join(__dirname,'views','auth.html')); throw err; }
+    res.redirect('/account/'+(account.role==='admin'?'admin':account.role==='contractor'?'contractor':'dashboard'));
+  }));
   pages.get(['/dashboard','/admin','/contractor'], asyncRoute(async(req,res)=> {
     let account;
     try { ({account}=await authenticated(req)); }

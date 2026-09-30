@@ -30,8 +30,8 @@ request. Public registration always creates a customer. Private pages require a
 session and redirect to the correct role's page. Password hashes, token hashes,
 session identifiers, and abuse counters are not exposed in admin responses.
 Public assets contain no records. Service requests are saved in PostgreSQL, not
-localStorage; session cookies remain Secure and HttpOnly. Existing idle and
-absolute expiry, exact-origin checks, CSRF headers, and authentication abuse
+localStorage; session cookies remain Secure and HttpOnly. Seven-day idle and
+thirty-day absolute expiry, exact-origin checks, CSRF headers, and authentication abuse
 limits remain in force.
 
 ## Upload and deployment order

@@ -102,6 +102,13 @@ app.use((_req, res, next) => {
 });
 // Disabled unless explicitly configured. Mount before public files/catch-all routes.
 if (accountOptions) {
+  const canonical = new URL(accountOptions.origin);
+  app.use((req,res,next)=> {
+    // A __Host cookie belongs to one hostname. Keep www visits on the login origin.
+    const alias = canonical.hostname.startsWith('www.') ? canonical.hostname.slice(4) : 'www.'+canonical.hostname;
+    if (req.hostname === alias) return res.redirect(308, canonical.origin+req.originalUrl);
+    next();
+  });
   const { createAccountRouter } = require('./accounts/router');
   const accounts = createAccountRouter({ ...accountOptions, mailTransport, from: SMTP_FROM });
   app.use('/api/account', accounts);

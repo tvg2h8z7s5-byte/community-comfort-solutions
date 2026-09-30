@@ -4,6 +4,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { createDatabase } = require('./database');
 const { databaseConfig } = require('./config');
+const { IDLE_SECONDS } = require('./session-policy');
 const directory = path.join(__dirname, 'migrations');
 async function migrate(db) {
   return db.transaction(async client => {
@@ -26,7 +27,7 @@ async function migrate(db) {
 async function cleanup(db) {
   return db.transaction(async client => {
     await client.query('DELETE FROM account_rate_limits WHERE expires_at<=now()');
-    await client.query("DELETE FROM account_sessions WHERE expires_at<=now() OR last_seen_at<=now()-interval '30 minutes'");
+    await client.query("DELETE FROM account_sessions WHERE expires_at<=now() OR last_seen_at<=now()-$1 * interval '1 second'", [IDLE_SECONDS]);
     await client.query('DELETE FROM account_tokens WHERE expires_at<=now() OR consumed_at IS NOT NULL');
   });
 }

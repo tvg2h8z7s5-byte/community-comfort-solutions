@@ -18,6 +18,35 @@ if(toggle && mobile){
 const CONTACT_EMAIL='contact@communitycomfortsolutions.org';
 const PHONE_DISPLAY='917-608-3201';
 
+// Read the shared HttpOnly session on every public page, including browser Back.
+// Account state is never saved into cached HTML or localStorage.
+(() => {
+  const links = [...document.querySelectorAll('[data-account-link]')];
+  if (!links.length) return;
+  let checking = false;
+  async function refreshAccount() {
+    if (checking) return;
+    checking = true;
+    try {
+      const response = await fetch('/api/account/session', {credentials:'same-origin', cache:'no-store'});
+      if (response.ok) {
+        const data = await response.json();
+        if (data.account) {
+          const target = data.account.role === 'admin' ? 'admin' : data.account.role === 'contractor' ? 'contractor' : 'dashboard';
+          for (const link of links) {link.textContent='My Account';link.href='/account/'+target;}
+        }
+      } else if ([401,403,404].includes(response.status)) {
+        for (const link of links) {link.textContent='Log in / Register';link.href='/account/login';}
+      }
+    } catch (_) { /* Keep the navigation usable during a connection failure. */ }
+    finally {checking=false;}
+  }
+  refreshAccount();
+  window.addEventListener('pageshow', refreshAccount);
+  window.addEventListener('focus', refreshAccount);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshAccount();});
+})();
+
 const form=document.getElementById('contact-form');
 if(form){
   const status=document.getElementById('form-status');
