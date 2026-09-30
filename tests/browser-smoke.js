@@ -10,7 +10,7 @@ const { createApp } = require('../backend/server');
   await new Promise(resolve=>server.once('listening',resolve));
   let browser;
   try {
-    browser=await chromium.launch({headless:true});
+    browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH||undefined});
     const page=await browser.newPage();
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     page.on('console',m=>{if(m.type()==='error' && /Content Security Policy|Refused to/.test(m.text()))errors.push(m.text());});

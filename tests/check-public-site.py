@@ -24,6 +24,7 @@ for name,p in pages.items():
   if u.scheme or u.netloc:continue
   target=u.path.lstrip('/') if u.path else name
   if not target:target='index.html'
+  if u.path.startswith('/account/'):continue
   if not (ROOT/target).is_file():errors.append(f'{name}: missing {ref}')
   elif u.fragment and target in pages and u.fragment not in pages[target].ids:errors.append(f'{name}: missing anchor {ref}')
  if p.titles!=1 or not p.meta.get('description'):errors.append(f'{name}: title/description missing')

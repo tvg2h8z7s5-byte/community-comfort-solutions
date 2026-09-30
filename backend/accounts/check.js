@@ -12,7 +12,7 @@ async function checkDatabase(db) {
     throw new Error('Use the restricted runtime database role.');
   }
   // Parse/select every runtime table without reading customer data.
-  for (const table of ['customer_accounts', 'customer_addresses', 'account_tokens', 'account_sessions', 'account_rate_limits']) {
+  for (const table of ['customer_accounts', 'customer_addresses', 'account_tokens', 'account_sessions', 'account_rate_limits', 'customer_equipment', 'service_requests']) {
     await db.query(`SELECT 1 FROM public.${table} LIMIT 0`);
   }
   return { user: row.db_user, database: row.database };

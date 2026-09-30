@@ -83,7 +83,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
       FROM customer_accounts a WHERE s.account_id=a.id AND s.session_hash=$1
       AND s.expires_at>now() AND s.last_seen_at>now()-interval '30 minutes'
       AND a.verified_at IS NOT NULL AND a.state='active'
-      RETURNING a.id,a.email,a.name,a.phone`, [security.tokenHash(raw)]);
+      RETURNING a.id,a.email,a.name,a.phone,a.role`, [security.tokenHash(raw)]);
     if (!result.rows.length) fail(401, 'Please sign in.');
     if (!['GET', 'HEAD'].includes(req.method) && !security.equalToken(req.get('x-csrf-token'), csrf(raw))) fail(403, 'Invalid request.');
     return { account: result.rows[0], raw };
@@ -159,7 +159,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     const raw = security.randomToken();
     const account = await db.transaction(async client => {
       // Serialize password recovery/suspension against login session creation.
-      const result = await client.query('SELECT id,email,password_hash,verified_at,state,name,phone FROM customer_accounts WHERE email=$1 FOR UPDATE', [address]);
+      const result = await client.query('SELECT id,email,password_hash,verified_at,state,name,phone,role FROM customer_accounts WHERE email=$1 FOR UPDATE', [address]);
       const row = result.rows[0];
       const valid = await security.verifyPassword(pass, row?.password_hash);
       if (!valid || !row.verified_at || row.state !== 'active') fail(401, 'Unable to sign in with these details.');
@@ -167,7 +167,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
       if (previous) await client.query('DELETE FROM account_sessions WHERE session_hash=$1', [security.tokenHash(previous)]);
       await client.query(`INSERT INTO account_sessions(session_hash,account_id,expires_at)
         VALUES($1,$2,now()+$3 * interval '1 second')`, [security.tokenHash(raw), row.id, SESSION_SECONDS]);
-      return { id: row.id, email: row.email, name: row.name, phone: row.phone };
+      return { id: row.id, email: row.email, name: row.name, phone: row.phone, role: row.role };
     });
     res.cookie(COOKIE, raw, { secure: true, httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_SECONDS * 1000 });
     res.json({ ok: true, account, csrfToken: csrf(raw) });
@@ -186,7 +186,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
   router.patch('/profile', asyncRoute(async (req, res) => {
     fields(req.body, ['name', 'phone']);
     const { account } = await authenticated(req);
-    const result = await db.query('UPDATE customer_accounts SET name=$1,phone=$2,updated_at=now() WHERE id=$3 RETURNING id,email,name,phone',
+    const result = await db.query('UPDATE customer_accounts SET name=$1,phone=$2,updated_at=now() WHERE id=$3 RETURNING id,email,name,phone,role',
       [text(req.body.name, 100, true), text(req.body.phone, 40), account.id]);
     res.json({ ok: true, account: result.rows[0] });
   }));
@@ -211,10 +211,21 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     });
     res.status(201).json({ ok: true, address: result.rows[0] });
   }));
-  // No delete/history/admin functionality until the owner approves those workflows.
+  require('./portal').installPortal(router, { db, authenticated, fields, text, fail, count });
+  const pages = express.Router();
+  pages.use((req,res,next)=> { if(!req.secure) return res.status(403).send('HTTPS is required.'); res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'}); next(); });
+  pages.get(['/dashboard','/admin','/contractor'], asyncRoute(async(req,res)=> {
+    let account;
+    try { ({account}=await authenticated(req)); }
+    catch(err) { if(err.status===401) return res.redirect('/account/login'); throw err; }
+    const target=account.role==='admin' ? '/admin' : account.role==='contractor' ? '/contractor' : '/dashboard';
+    if(req.path!==target) return res.redirect('/account'+target);
+    res.sendFile(require('node:path').join(__dirname,'views','dashboard.html'));
+  }));
+  router.pages = pages;
   router.use((_req, res) => res.status(404).json({ ok: false, error: 'Not found.' }));
   router.use((err, _req, res, _next) => {
-    const status = [400, 401, 403, 429, 503].includes(err.status) ? err.status : err.type === 'entity.too.large' ? 413 : 500;
+    const status = [400, 401, 403, 404, 429, 503].includes(err.status) ? err.status : err.type === 'entity.too.large' ? 413 : 500;
     if (status === 500) console.error('Account request failed.');
     if (status === 429 || status === 503) res.set('Retry-After', status === 429 ? '900' : '5');
     res.status(status).json({ ok: false, error: status === 500 ? 'Unable to process your request.' :

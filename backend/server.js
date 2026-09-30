@@ -103,8 +103,15 @@ app.use((_req, res, next) => {
 // Disabled unless explicitly configured. Mount before public files/catch-all routes.
 if (accountOptions) {
   const { createAccountRouter } = require('./accounts/router');
-  app.use('/api/account', createAccountRouter({ ...accountOptions, mailTransport, from: SMTP_FROM }));
+  const accounts = createAccountRouter({ ...accountOptions, mailTransport, from: SMTP_FROM });
+  app.use('/api/account', accounts);
+  app.use('/account', accounts.pages);
 }
+app.get(['/account/login','/account/register','/account/forgot','/account/verify','/account/reset','/account/resend'], (_req,res)=> {
+  res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'});
+  res.sendFile(path.join(__dirname,'accounts','views','auth.html'));
+});
+app.get(['/account/dashboard','/account/admin','/account/contractor'], (_req,res)=>res.redirect('/account/login'));
 app.get('/404.html', (_req, res) => res.status(404).sendFile(path.join(SITE_DIR, '404.html')));
 app.use(express.static(SITE_DIR, { dotfiles: 'deny' }));
 
@@ -206,7 +213,9 @@ if (require.main === module) {
     if (config) {
       db = require('./accounts/database').createDatabase(config.database);
       // Fail closed if the explicitly migrated schema is unavailable.
-      await db.query('SELECT id FROM customer_accounts LIMIT 0');
+      await db.query('SELECT id,role FROM customer_accounts LIMIT 0');
+      await db.query('SELECT id FROM customer_equipment LIMIT 0');
+      await db.query('SELECT id FROM service_requests LIMIT 0');
       await db.query('SELECT token_hash FROM account_tokens LIMIT 0');
       await db.query('SELECT session_hash FROM account_sessions LIMIT 0');
       await db.query('SELECT id FROM customer_addresses LIMIT 0');

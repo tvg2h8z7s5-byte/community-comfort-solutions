@@ -1,3 +1,8 @@
+> **Portal update:** Login/signup and customer/admin pages are now implemented.
+> Use [PORTAL_SETUP.md](../../PORTAL_SETUP.md) for the current roles, migration,
+> activation, and deployment workflow. The foundation notes below describe the
+> earlier phase; the portal guide supersedes their frontend/admin exclusions.
+
 # Customer account backend — local foundation
 
 This phase adds PostgreSQL-backed account APIs. It does **not** provision a live

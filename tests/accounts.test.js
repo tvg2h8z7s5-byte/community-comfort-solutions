@@ -91,7 +91,7 @@ test('password hashes are salted, checked safely and memory-heavy concurrency is
 test('SQL migration is repeatable; unique emails, token purposes and ownership foreign keys are enforced', async () => {
   await withAccounts(async ({ db }) => {
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 1);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 2);
     const id = randomUUID();
     await db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [id, 'one@example.test', 'fixture']);
     await assert.rejects(db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [randomUUID(), 'one@example.test', 'fixture']));
@@ -104,7 +104,7 @@ test('SQL migration is repeatable; unique emails, token purposes and ownership f
 test('read-only connection check accepts the runtime role and rejects administrator/migration access', async () => {
   await withAccounts(async ({ db }) => {
     await assert.rejects(checkDatabase(db), /restricted runtime/);
-    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits TO ccs_app');
+    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests TO ccs_app');
     await db.query('SET ROLE ccs_app');
     const result = await checkDatabase(db);
     assert.equal(result.user, 'ccs_app');
@@ -213,4 +213,42 @@ test('SMTP failures keep accounts recoverable and database failures disclose no 
     assert.equal(response.status, 500);
     assert.deepEqual(await response.json(), { ok: false, error: 'Unable to process your request.' });
   });
+});
+test('portal roles enforce customer ownership and keep admin notes and credentials private', async()=>{
+ await withAccounts(async({db,request,base})=>{
+  const users={};
+  for(const role of ['customer','admin','contractor']){
+   const id=randomUUID(), raw=crypto.randomToken();
+   await db.query('INSERT INTO customer_accounts(id,email,password_hash,verified_at,role,name) VALUES($1,$2,$3,now(),$4,$5)',[id,role+'@example.test','unused-fixture',role,role]);
+   await db.query("INSERT INTO account_sessions(session_hash,account_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",[crypto.tokenHash(raw),id]);
+   const cookie='__Host-ccs_session='+raw;
+   const response=await request('session',undefined,{headers:{Cookie:cookie}});const session=await response.json();
+   assert.equal(session.account.role,role);users[role]={id,headers:{Cookie:cookie,'X-CSRF-Token':session.csrfToken}};
+  }
+  const customer=users.customer,admin=users.admin,contractor=users.contractor;
+  const addressResponse=await request('addresses',{line1:'123 Test St',city:'Old Bridge',region:'NJ',postal_code:'08857'},{headers:customer.headers});
+  const address=(await addressResponse.json()).address;
+  assert.equal((await request('equipment',{address_id:address.id,name:'Downstairs',type:'Furnace'},{headers:customer.headers})).status,201);
+  assert.equal((await request('equipment',undefined,{headers:contractor.headers})).status,403);
+  assert.equal((await request('admin/accounts',undefined,{headers:customer.headers})).status,403);
+  assert.equal((await request('admin/accounts',undefined,{headers:contractor.headers})).status,403);
+  assert.equal((await request('profile',{name:'New',role:'admin'},{method:'PATCH',headers:customer.headers})).status,400);
+  assert.equal((await request('register',{email:'attack@example.test',password:PASSWORD,role:'admin'})).status,400);
+  const foreignId=randomUUID();
+  await db.query('INSERT INTO customer_accounts(id,email,password_hash,verified_at) VALUES($1,$2,$3,now())',[foreignId,'other@example.test','unused']);
+  const foreignAddress=randomUUID();await db.query('INSERT INTO customer_addresses(id,account_id,line1,city,region,postal_code) VALUES($1,$2,$3,$4,$5,$6)',[foreignAddress,foreignId,'Other home','Other town','NJ','08857']);
+  assert.equal((await request('requests',{address_id:foreignAddress,service:'Diagnosis',description:'Attempt cross-account'},{headers:customer.headers})).status,404);
+  const created=await request('requests',{address_id:address.id,service:'Diagnosis',description:'No heat'},{headers:customer.headers});assert.equal(created.status,201);const id=(await created.json()).id;
+  assert.equal((await request('admin/requests/'+id,{status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'},{method:'PATCH',headers:customer.headers})).status,403);
+  assert.equal((await request('admin/requests/'+id,{status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'},{method:'PATCH',headers:admin.headers})).status,200);
+  const own=await (await request('requests',undefined,{headers:customer.headers})).json();assert.equal(own.requests.length,1);assert.equal(own.requests[0].status,'reviewing');assert.equal(own.requests[0].internal_notes,undefined);
+  const directory=await (await request('admin/accounts?role=contractor',undefined,{headers:admin.headers})).json();assert.equal(directory.total,1);assert.equal(directory.accounts[0].id,contractor.id);assert.equal(directory.accounts[0].password_hash,undefined);
+  const detail=await (await request('admin/accounts/'+customer.id,undefined,{headers:admin.headers})).json();assert.equal(detail.addresses.length,1);assert.equal(detail.equipment.length,1);assert.equal(detail.requests[0].internal_notes,'Private staff details');assert.equal(detail.account.password_hash,undefined);
+  assert.equal((await request('admin/requests/'+id,{status:'scheduled'},{method:'PATCH',headers:{Cookie:admin.headers.Cookie}})).status,403);
+  assert.equal((await request('admin/accounts?role=admin',undefined,{headers:admin.headers})).status,400);
+  const anonymous=await fetch(base+'/account/admin',{redirect:'manual',headers:{'X-Forwarded-Proto':'https'}});assert.equal(anonymous.status,302);assert.equal(anonymous.headers.get('location'),'/account/login');
+  const denied=await fetch(base+'/account/admin',{redirect:'manual',headers:{'X-Forwarded-Proto':'https',Cookie:customer.headers.Cookie}});assert.equal(denied.status,302);assert.equal(denied.headers.get('location'),'/account/dashboard');
+  const page=await fetch(base+'/account/admin',{headers:{'X-Forwarded-Proto':'https',Cookie:admin.headers.Cookie}});assert.equal(page.status,200);assert.equal(page.headers.get('cache-control'),'private, no-store');
+  await db.query("UPDATE customer_accounts SET state='suspended' WHERE id=$1",[admin.id]);assert.equal((await request('admin/accounts',undefined,{headers:admin.headers})).status,401);
+ });
 });
