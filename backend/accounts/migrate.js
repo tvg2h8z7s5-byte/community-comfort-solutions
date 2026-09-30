@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { createDatabase } = require('./database');
+const { databaseConfig } = require('./config');
 const directory = path.join(__dirname, 'migrations');
 async function migrate(db) {
   return db.transaction(async client => {
@@ -35,8 +36,7 @@ if (require.main === module) {
     if (args.some(arg => !['--apply', '--cleanup', '--allow-production'].includes(arg)) ||
       (args.includes('--apply') === args.includes('--cleanup'))) throw new Error('Choose --apply or --cleanup.');
     if (process.env.NODE_ENV === 'production' && !args.includes('--allow-production')) throw new Error('Production requires explicit --allow-production.');
-    if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
-    const db = createDatabase(process.env.DATABASE_URL);
+    const db = createDatabase(databaseConfig());
     try {
       await (args.includes('--cleanup') ? cleanup(db) : migrate(db));
       console.log('Account database operation completed.');

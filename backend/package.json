@@ -8,7 +8,8 @@
     "start": "node server.js",
     "test": "node --test ../tests/public-backend.test.js ../tests/client-ip.test.js ../tests/accounts.test.js",
     "accounts:migrate": "node accounts/migrate.js --apply",
-    "accounts:cleanup": "node accounts/migrate.js --cleanup"
+    "accounts:cleanup": "node accounts/migrate.js --cleanup",
+    "accounts:check": "node accounts/check.js"
   },
   "engines": {
     "node": ">=20"

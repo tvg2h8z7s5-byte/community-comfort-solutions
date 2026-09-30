@@ -11,7 +11,12 @@ existing SMTP transport and do not write customer records.
 | --- | --- |
 | `AUTH_ENABLED` | Omit or set `false` to keep accounts disabled. Only literal `true` enables them; invalid values fail startup. |
 | `AUTH_PUBLIC_URL` | Exact HTTPS origin of the future account UI, for example `https://communitycomfortsolutions.org`. No path, credentials, query or fragment. |
-| `DATABASE_URL` | Connection string for the separate business PostgreSQL database. Supply through the deployment environment, never Git or chat. |
+| `PGHOST` | Internal Docker hostname of the separate business database, not localhost or the VPS IP. |
+| `PGPORT` | Internal PostgreSQL port, `5432`. |
+| `PGDATABASE` | Business database name, `ccs_business`. |
+| `PGUSER` | Restricted website user, `ccs_app`; use `ccs_migrator` only for explicit migrations. |
+| `PGPASSWORD` | That user's password, entered directly without URL encoding. Supply only through the deployment environment, never Git or chat. |
+| `DATABASE_URL` | Alternative connection string. Use either this or the five separate PG fields; mixing them fails validation. |
 | `AUTH_SECRET` | Base64 encoding of 32 cryptographically random bytes. Supply through deployment environment; do not commit or share it. |
 
 Existing SMTP variables remain unchanged. Account links are based on the fixed
@@ -27,14 +32,22 @@ production connections. Tests use development-only PGlite's embedded PostgreSQL
 engine in disposable memory, with fake accounts and a fake mail transport.
 PGlite is omitted by the existing Docker `npm ci --omit=dev` command.
 
+After configuring the runtime PG fields, verify the native driver connection
+inside the website container with `node /app/backend/accounts/check.js` (or
+`npm run accounts:check --prefix backend` from a checkout). This read-only command
+checks the restricted role and table access without printing passwords,
+connection URLs or customer records. It works while `AUTH_ENABLED=false`; a
+successful redeploy alone does not test connectivity while accounts are disabled.
+
 ## Schema and explicit migrations
 
 The owner approved PostgreSQL and public signup with verification. Live service
 provisioning, credentials, storage and backups still require separate approval.
 Do not reuse the `coolify-db` or `coolify-redis` containers.
 
-Use a disposable development/test database first. Supply `DATABASE_URL` securely
-in that environment, then run from the repository:
+Use a disposable development/test database first. Supply the five PG fields
+(using the migration user) or `DATABASE_URL` securely in that environment, then
+run from the repository:
 
 ```sh
 npm run accounts:migrate --prefix backend

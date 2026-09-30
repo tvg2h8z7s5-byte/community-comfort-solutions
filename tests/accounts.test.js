@@ -5,7 +5,8 @@ const { randomBytes, randomUUID } = require('node:crypto');
 const { PGlite } = require('../backend/node_modules/@electric-sql/pglite');
 const { createApp } = require('../backend/server');
 const { migrate, cleanup } = require('../backend/accounts/migrate');
-const { accountConfig } = require('../backend/accounts/config');
+const { checkDatabase } = require('../backend/accounts/check');
+const { accountConfig, databaseConfig } = require('../backend/accounts/config');
 const crypto = require('../backend/accounts/crypto');
 const ORIGIN = 'https://accounts.example.test';
 const PASSWORD = 'a long unique test password';
@@ -60,6 +61,22 @@ test('account configuration is off by default and rejects incomplete/insecure se
     assert.throws(() => accountConfig({ ...valid, ...override }));
   }
 });
+test('separate database fields preserve special password characters and reject missing/ambiguous configuration', () => {
+  // A synthetic fixture, not a real credential.
+  const fixture = { PGHOST: 'database-container', PGPORT: '5432', PGDATABASE: 'ccs_business', PGUSER: 'ccs_app', PGPASSWORD: ' test:@/?#%[]+$ password ' };
+  const config = databaseConfig(fixture);
+  assert.equal(config.password, fixture.PGPASSWORD);
+  assert.equal(config.user, 'ccs_app');
+  assert.equal(config.port, 5432);
+  for (const key of Object.keys(fixture)) assert.throws(() => databaseConfig({ ...fixture, [key]: undefined }));
+  for (const port of ['0', '65536', '-1', '5432oops']) assert.throws(() => databaseConfig({ ...fixture, PGPORT: port }));
+  assert.throws(() => databaseConfig({ ...fixture, PGHOST: 'https://wrong-host' }));
+  assert.throws(() => databaseConfig({ ...fixture, DATABASE_URL: 'postgres://test:test@localhost/business' }));
+  const enabled = accountConfig({ ...fixture, AUTH_ENABLED: 'true', AUTH_PUBLIC_URL: ORIGIN, AUTH_SECRET: randomBytes(32).toString('base64') });
+  assert.deepEqual(enabled.database, config);
+  assert.equal(accountConfig({ ...fixture, AUTH_ENABLED: 'false' }), null);
+  assert.deepEqual(databaseConfig({ DATABASE_URL: 'postgres://test:test@localhost/business' }), { connectionString: 'postgres://test:test@localhost/business' });
+});
 test('password hashes are salted, checked safely and memory-heavy concurrency is bounded', async () => {
   assert.equal(crypto.validPassword('short'), false);
   const task = crypto.hashPassword(PASSWORD);
@@ -82,6 +99,20 @@ test('SQL migration is repeatable; unique emails, token purposes and ownership f
     await assert.rejects(db.query('INSERT INTO account_sessions(session_hash,account_id,expires_at) VALUES($1,$2,now())', ['b'.repeat(64), randomUUID()]));
     await db.query("UPDATE account_schema_migrations SET checksum=$1", ['0'.repeat(64)]);
     await assert.rejects(migrate(db), /Applied migration has changed/);
+  });
+});
+test('read-only connection check accepts the runtime role and rejects administrator/migration access', async () => {
+  await withAccounts(async ({ db }) => {
+    await assert.rejects(checkDatabase(db), /restricted runtime/);
+    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits TO ccs_app');
+    await db.query('SET ROLE ccs_app');
+    const result = await checkDatabase(db);
+    assert.equal(result.user, 'ccs_app');
+    await db.query('RESET ROLE');
+    await db.query('GRANT CREATE ON SCHEMA public TO ccs_app');
+    await db.query('SET ROLE ccs_app');
+    await assert.rejects(checkDatabase(db), /restricted runtime/);
+    await db.query('RESET ROLE');
   });
 });
 test('registration, verification, session security, profile ownership, recovery and logout work together', async () => {

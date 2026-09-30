@@ -1,7 +1,8 @@
 'use strict';
 const { Pool } = require('pg');
-function createDatabase(connectionString) {
-  const pool = new Pool({ connectionString, max: 3, connectionTimeoutMillis: 5000,
+function createDatabase(connection) {
+  const options = typeof connection === 'string' ? { connectionString: connection } : connection;
+  const pool = new Pool({ ...options, max: 3, connectionTimeoutMillis: 5000,
     idleTimeoutMillis: 10000, statement_timeout: 5000, application_name: 'ccs-accounts' });
   pool.on('error', () => console.error('Account database connection failed.'));
   return {

@@ -204,7 +204,7 @@ if (require.main === module) {
     const config = accountConfig();
     let db;
     if (config) {
-      db = require('./accounts/database').createDatabase(config.connectionString);
+      db = require('./accounts/database').createDatabase(config.database);
       // Fail closed if the explicitly migrated schema is unavailable.
       await db.query('SELECT id FROM customer_accounts LIMIT 0');
       await db.query('SELECT token_hash FROM account_tokens LIMIT 0');

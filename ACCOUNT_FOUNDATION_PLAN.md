@@ -22,9 +22,13 @@ configuration must be reviewed before creating the live service.
 
 The owner approved PostgreSQL on September 29, 2026 (America/New_York).
 A local account backend and disposable test database are now implemented; see
-`backend/accounts/README.md`. No production database has been created, no live
-settings have changed, and accounts remain disabled by default. Account UI and
-portal pages are still pending.
+`backend/accounts/README.md`. The owner subsequently provisioned the separate
+private PostgreSQL 18 database through Coolify, applied the migration as
+`ccs_migrator`, and granted restricted runtime access to `ccs_app`.
+Owner-supplied checks confirm six tables, zero customers and no schema-create
+or migration-ledger-update permission for `ccs_app`. The website's native-driver
+connection as that user, backups/restore and account activation remain pending.
+Accounts are disabled; account UI and portal pages are still pending.
 
 ## Proposed initial data structure
 
