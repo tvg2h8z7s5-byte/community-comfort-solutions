@@ -56,8 +56,6 @@
 .brand{min-width:0;flex-shrink:0}
 .footer-brand .brand-logo{background:#fff;border-radius:6px;padding:3px}
 .nav-wrap{gap:20px}.desktop-nav{gap:18px}
-.skip-link{position:absolute;left:14px;top:-100px;background:#fff;color:var(--navy);padding:10px;z-index:100}
-.skip-link:focus{top:8px}
 :focus-visible{outline:3px solid var(--blue);outline-offset:3px}
 [id]{scroll-margin-top:95px}
 .field,.contact-grid>*,.footer-grid>*{min-width:0}
