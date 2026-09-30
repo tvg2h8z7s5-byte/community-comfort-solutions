@@ -107,3 +107,11 @@ main{overflow-wrap:anywhere}
  .split-card .site-photo.large-photo{height:280px;min-height:0}
 }
 @media(max-width:520px){.site-photo.hero-photo{height:245px}.hero h1{font-size:37px}}
+
+/* Text-only homepage introduction. */
+.hero-text-only .hero-grid{display:block;max-width:960px}
+.hero-text-only .hero-copy{text-align:center;padding:28px 0}
+.hero-text-only h1{max-width:none}
+.hero-text-only .lead{max-width:760px;margin:20px auto}
+.hero-text-only .hero-buttons,.hero-text-only .service-strip{justify-content:center}
+@media(max-width:800px){.hero-text-only .hero-copy{padding:16px 0}}
