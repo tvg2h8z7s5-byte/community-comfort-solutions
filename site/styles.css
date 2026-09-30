@@ -135,3 +135,16 @@ main{overflow-wrap:anywhere}
  .maintenance-feature .feature-panel{padding:28px}
 }
 @media(max-width:520px){.maintenance-feature .feature-panel{padding:24px}}
+
+/* Bound loaded photos and their grid tracks on narrow screens. */
+img{max-width:100%}
+.site-photo{max-width:100%;min-width:0}
+.split,.detail-grid,.split-card,.card-grid{min-width:0}
+.split>*,.detail-grid>*,.split-card>*,.card-grid>*{min-width:0;max-width:100%}
+html,body{max-width:100%;overflow-x:clip}
+@supports not (overflow-x:clip){html,body{overflow-x:hidden}}
+@media(max-width:800px){
+ .site-photo.about-photo{height:clamp(220px,70vw,300px);min-height:0;max-height:300px;object-fit:cover}
+ .site-photo.large-photo{max-height:320px}
+ .site-photo.card-photo{height:160px;min-height:0;max-height:160px}
+}
