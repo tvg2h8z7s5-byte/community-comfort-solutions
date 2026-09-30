@@ -3,6 +3,7 @@ const express = require('express');
 const { randomUUID } = require('node:crypto');
 const { contactClientIP } = require('../client-ip');
 const security = require('./crypto');
+const { accountEmail, receiptEmail } = require('../emails');
 const COOKIE = '__Host-ccs_session';
 const SESSION_SECONDS = 8 * 60 * 60;
 const GENERIC = { ok: true, message: 'If eligible, you will receive an email with the next step.' };
@@ -64,9 +65,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
       VALUES($1,$2,$3,now()+$4 * interval '1 second')`, [hash, account.id, purpose, purpose === 'verify' ? 86400 : 1800]);
     const url = `${origin}/account/${purpose === 'verify' ? 'verify' : 'reset'}#token=${raw}`;
     try {
-      await mailTransport.sendMail({ from, to: account.email,
-        subject: purpose === 'verify' ? 'Verify your Community Comfort Solutions account' : 'Reset your Community Comfort Solutions password',
-        text: `${purpose === 'verify' ? 'Verify your email address' : 'Reset your password'}: ${url}\n\nIf you did not request this, you can ignore this email.` });
+      await mailTransport.sendMail({ from, to: account.email, replyTo: from, ...accountEmail(purpose, url) });
     } catch (_) {
       await db.query('DELETE FROM account_tokens WHERE token_hash=$1', [hash]);
       console.error('Account email delivery failed.');
@@ -211,7 +210,18 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     });
     res.status(201).json({ ok: true, address: result.rows[0] });
   }));
-  require('./portal').installPortal(router, { db, authenticated, fields, text, fail, count });
+  require('./portal').installPortal(router, { db, authenticated, fields, text, fail, count, notifyRequest: async (account, request) => {
+    try {
+      await mailTransport.sendMail({ from, to: account.email, replyTo: from,
+        ...receiptEmail({name: account.name, kind: 'service', portalUrl: origin+'/account/dashboard', rows: [
+          ['Request reference', request.id], ['Service', request.service],
+          ['Preferred day', request.preferred_day], ['Description', request.description]
+        ]}) });
+    } catch (_) {
+      // The request is already saved; never encourage duplicate submissions.
+      console.error('Service request acknowledgment delivery failed.');
+    }
+  } });
   const pages = express.Router();
   pages.use((req,res,next)=> { if(!req.secure) return res.status(403).send('HTTPS is required.'); res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'}); next(); });
   pages.get(['/dashboard','/admin','/contractor'], asyncRoute(async(req,res)=> {

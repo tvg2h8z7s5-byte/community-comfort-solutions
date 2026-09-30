@@ -118,6 +118,10 @@ test('read-only connection check accepts the runtime role and rejects administra
 test('registration, verification, session security, profile ownership, recovery and logout work together', async () => {
   await withAccounts(async ({ db, request, register, login, messages, latestToken }) => {
     const verification = await register('Alice@Example.test');
+    assert.match(messages.at(-1).html, /Welcome! Verify your email/);
+    assert.match(messages.at(-1).html, /expires in 24 hours/);
+    assert.match(messages.at(-1).html, new RegExp(verification));
+
     const row = (await db.query('SELECT * FROM customer_accounts')).rows[0];
     assert.equal(row.email, 'alice@example.test');
     assert.notEqual(row.password_hash, PASSWORD);
@@ -215,7 +219,7 @@ test('SMTP failures keep accounts recoverable and database failures disclose no 
   });
 });
 test('portal roles enforce customer ownership and keep admin notes and credentials private', async()=>{
- await withAccounts(async({db,request,base})=>{
+ await withAccounts(async({db,request,base,messages,setMailFailure})=>{
   const users={};
   for(const role of ['customer','admin','contractor']){
    const id=randomUUID(), raw=crypto.randomToken();
@@ -239,6 +243,19 @@ test('portal roles enforce customer ownership and keep admin notes and credentia
   const foreignAddress=randomUUID();await db.query('INSERT INTO customer_addresses(id,account_id,line1,city,region,postal_code) VALUES($1,$2,$3,$4,$5,$6)',[foreignAddress,foreignId,'Other home','Other town','NJ','08857']);
   assert.equal((await request('requests',{address_id:foreignAddress,service:'Diagnosis',description:'Attempt cross-account'},{headers:customer.headers})).status,404);
   const created=await request('requests',{address_id:address.id,service:'Diagnosis',description:'No heat'},{headers:customer.headers});assert.equal(created.status,201);const id=(await created.json()).id;
+  assert.equal(messages.at(-1).to,'customer@example.test');
+  assert.match(messages.at(-1).text,/within 24 hours/);
+  assert.match(messages.at(-1).text,new RegExp(id));
+  assert.match(messages.at(-1).html,/View your requests/);
+  assert.doesNotMatch(messages.at(-1).text,/internal_notes|Private staff/);
+  setMailFailure(true);
+  const accepted = await request('requests',{address_id:address.id,service:'Diagnosis',description:'Receipt delivery failure fixture'},{headers:customer.headers});
+  assert.equal(accepted.status,201);
+  const failedReceiptId=(await accepted.json()).id;
+  assert.equal((await db.query('SELECT id FROM service_requests WHERE id=$1',[failedReceiptId])).rows.length,1);
+  await db.query('DELETE FROM service_requests WHERE id=$1',[failedReceiptId]);
+  setMailFailure(false);
+
   assert.equal((await request('admin/requests/'+id,{status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'},{method:'PATCH',headers:customer.headers})).status,403);
   assert.equal((await request('admin/requests/'+id,{status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'},{method:'PATCH',headers:admin.headers})).status,200);
   const own=await (await request('requests',undefined,{headers:customer.headers})).json();assert.equal(own.requests.length,1);assert.equal(own.requests[0].status,'reviewing');assert.equal(own.requests[0].internal_notes,undefined);

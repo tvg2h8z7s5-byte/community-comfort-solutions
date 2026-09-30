@@ -1,6 +1,6 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
-function installPortal(router, { db, authenticated, fields, text, fail, count }) {
+function installPortal(router, { db, authenticated, fields, text, fail, count, notifyRequest }) {
  const uuid = value => { if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value || '')) fail(400,'Invalid record.'); return value; };
  const wrap = fn => (req,res,next) => Promise.resolve(fn(req,res)).catch(next);
  async function permitted(req,role) { const {account}=await authenticated(req); if(account.role!==role) fail(403,'You do not have access to this area.'); return account; }
@@ -39,6 +39,7 @@ function installPortal(router, { db, authenticated, fields, text, fail, count })
   const day=text(req.body.preferred_day,10);
   if(day && (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0,10)!==day || day < new Date().toISOString().slice(0,10))) fail(400,'Choose a valid future date.');
   const result=await db.query(`INSERT INTO service_requests(id,account_id,address_id,service,description,preferred_day) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,[randomUUID(),a.id,req.body.address_id,req.body.service,text(multiline(req.body.description,3000).replace(/\r?\n/g,' '),3000,true),day||null]);
+  await notifyRequest(a, {id: result.rows[0].id, service: req.body.service, preferred_day: day, description: req.body.description.trim()});
   res.status(201).json({ok:true,id:result.rows[0].id});
  }));
  router.get('/admin/accounts',wrap(async(req,res)=>{

@@ -36,11 +36,16 @@ test('form email contract, honeypot and hostile input', async () => {
   const sent = [];
   await withApp({ sendMail: async message => sent.push(message) }, async base => {
     assert.equal((await post(base, {name:'Test <visitor>',email:'visitor@example.com',message:'<script>bad</script>'})).status, 200);
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 2);
     assert.match(sent[0].html, /&lt;script&gt;/);
     assert.equal(sent[0].replyTo.address, 'visitor@example.com');
+    assert.equal(sent[1].to, 'visitor@example.com');
+    assert.match(sent[1].text, /within 24 hours/);
+    assert.match(sent[1].html, /Hi Test &lt;visitor&gt;/);
+    assert.match(sent[1].html, /&lt;script&gt;/);
+    assert.doesNotMatch(sent[1].html, /<script>/);
     assert.equal((await post(base, { _gotcha:'bot' })).status, 200);
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 2);
     assert.equal((await post(base, {name: ['duplicate'], phone:'123'})).status, 400);
     assert.equal((await post(base, {name:'Test',email:'bad\r\nBcc: bad@example.com'})).status, 400);
     assert.equal((await post(base, {name:'Test',phone:'123'}, {Origin:'https://untrusted.example'})).status, 403);
@@ -135,14 +140,28 @@ test('upgraded Nodemailer delivers the form through a local SMTP test server', a
       const response = await post(base, {name:'SMTP Test', email:'visitor@example.com',
         message:'Local delivery check', _subject:'New SERVICE REQUEST'});
       assert.equal(response.status, 200);
-      assert.equal(messages.length, 1);
+      assert.equal(messages.length, 2);
       assert(commands.includes('AUTH'));
       assert.match(messages[0], /Reply-To: SMTP Test <visitor@example.com>/);
       assert.match(messages[0], /Subject: New SERVICE REQUEST \(SMTP Test\)/);
       assert.match(messages[0], /Local delivery check/);
+      assert.match(messages[1], /within 24 hours/);
+      assert.match(messages[1], /Subject: We received your service request/);
     });
   } finally {
     transport.close();
     await new Promise(resolve => smtp.close(resolve));
   }
+});
+
+test('receipt failures preserve accepted inquiries; phone-only requests send no receipt', async () => {
+  const sent = [];
+  await withApp({sendMail: async message => {sent.push(message); if(message.to === 'visitor@example.com') throw new Error('private SMTP details');}}, async base => {
+    const response = await post(base,{name:'Visitor',email:'visitor@example.com',message:'Question'});
+    assert.equal(response.status,200);
+    assert.deepEqual(await response.json(),{ok:true});
+    assert.equal(sent.length,2);
+    assert.equal((await post(base,{name:'Phone visitor',phone:'917-555-0100'})).status,200);
+    assert.equal(sent.length,3);
+  });
 });

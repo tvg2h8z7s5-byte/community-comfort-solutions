@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('node:crypto');
 const { contactClientIP } = require('./client-ip');
+const { layout, details, receiptEmail } = require('./emails');
 const SITE_DIR = path.join(__dirname, '..', 'site');
 
 // --- tiny .env loader (no extra dependency) ---
@@ -68,7 +69,6 @@ const ALLOWED_SUBJECT_PREFIXES = [
 const clean = (v, max) =>
   String(v == null ? '' : v).replace(/\r\n/g, '\n').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim().slice(0, max);
 const oneLine = (v, max) => clean(v, max).replace(/\s*\n\s*/g, ' ');
-const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const validEmail = s => /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$/.test(s);
 
 const origins = ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
@@ -161,8 +161,7 @@ app.post('/api/contact', limiter,
 
   const rows = FIELDS.filter(([k]) => data[k]);
   const text = rows.map(([k, label]) => `${label}: ${data[k]}`).join('\n');
-  const htmlRows = rows.map(([k, label]) =>
-    `<tr><td style="padding:4px 12px 4px 0;color:#555;vertical-align:top"><b>${esc(label)}</b></td><td style="padding:4px 0;white-space:pre-wrap">${esc(data[k])}</td></tr>`).join('');
+
 
   try {
     await mailTransport.sendMail({
@@ -171,8 +170,18 @@ app.post('/api/contact', limiter,
       replyTo: data.email && validEmail(data.email) ? { name: data.name, address: data.email } : undefined,
       subject,
       text,
-      html: `<table style="font-family:Arial,sans-serif;font-size:14px">${htmlRows}</table>`,
+      html: layout('New website inquiry', '<p>A visitor submitted the following details. Reply to this email to contact them when an email address was provided.</p>'+details(rows.map(([k,label])=>[label,data[k]]))),
     });
+    if (data.email) {
+      const kind = String(body._subject || '').startsWith('New SERVICE REQUEST') ? 'service' : String(body._subject || '').startsWith('Privacy request') ? 'privacy' : 'contact';
+      try {
+        await mailTransport.sendMail({ from: SMTP_FROM, to: data.email, replyTo: CONTACT_TO,
+          ...receiptEmail({name: data.name, kind, rows: rows.filter(([k])=>!['name','email','phone'].includes(k)).map(([k,label])=>[label,data[k]])}) });
+      } catch (_) {
+        // Staff already received the inquiry. Return success to avoid duplicate requests.
+        console.error('Contact acknowledgment delivery failed.');
+      }
+    }
     return res.json({ ok: true });
   } catch (err) {
     // Never log the SMTP response/message: it can include credentials or customer data.
