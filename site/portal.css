@@ -7,3 +7,91 @@ a.stat{display:block;color:var(--ink);text-decoration:none;transition:border-col
 .billing-layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:22px;align-items:start}.billing-layout .panel{min-width:0}.billing-summary{position:sticky;top:20px}.billing-summary p{font-size:12px}.billing-summary .full{margin-top:12px}.billing-summary #live-totals p,.invoice-totals p{display:flex;justify-content:space-between;gap:20px}.billing-grand{border-top:1px solid var(--line);padding-top:15px;font-size:18px!important}.billing-line{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;background:#f5f9fc;border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}.billing-line .line-description{grid-column:1/-1}.billing-line label{font-size:12px;margin:0 0 5px}.billing-line input{margin:0;min-width:0}.billing-line [data-line-total]{align-self:center}.check-label{display:flex!important;align-items:center;gap:8px;font-size:12px!important}.check-label input{width:auto!important;margin:0!important}.customer-choice{margin:4px;max-width:100%;white-space:normal}.invoice-heading{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);padding-bottom:24px;margin:24px 0}.invoice-brand{display:flex;align-items:flex-start;gap:14px}.invoice-brand h2{font-size:20px}.invoice-brand p{font-size:12px;color:var(--muted)}.invoice-totals{max-width:320px;margin:24px 0 24px auto}.invoice-totals p:last-child{border-top:1px solid var(--line);padding-top:14px;font-size:19px}.billing-actions{flex-wrap:wrap;margin:0}.billing-actions+.invoice-preview{margin-top:24px}.badge-paid,.badge-accepted{background:#e3f5ec;color:#187454}.badge-partial,.badge-issued{background:#e5f1ff;color:#286aa5}.badge-void,.badge-declined{background:#f7eae8;color:#8e4b40}@media(max-width:1100px){.billing-layout{grid-template-columns:minmax(0,1fr)}.billing-summary{position:static}}@media(max-width:600px){.invoice-heading{flex-direction:column}.invoice-brand{flex-wrap:wrap}.billing-line{grid-template-columns:1fr 1fr}.billing-line .line-description{grid-column:1/-1}.billing-actions{flex-direction:column}.invoice-totals{max-width:none}.billing-summary .actions{flex-wrap:wrap}}
 
 .sidebar nav{min-height:0;overflow-y:auto}.record-card .actions{flex-wrap:wrap}.request-row .actions{flex-wrap:wrap}.record-card .body-copy{white-space:pre-wrap}.panel [role=alert]{color:#9b3b22;font-size:13px}.billing-summary #invoice-tools .actions{flex-direction:column}.billing-summary #invoice-tools .button{width:100%}@media(max-width:760px){.sidebar nav{overflow-y:hidden}.filters .check-label{margin:10px 0}}
+
+/* Dashboard navigation and action contrast, shared by every account role. */
+.portal-body .sidebar{
+ background:linear-gradient(165deg,#153c60 0%,#0c2946 100%);
+ border-right-color:#234969;
+ box-shadow:5px 0 24px #102f4d0a;
+}
+.portal-body .sidebar .brand{color:#fff;font-size:11px;flex-shrink:0}
+.portal-body .sidebar .brand img{background:#fff;border-radius:11px;padding:4px;width:46px;height:46px;object-fit:contain;flex-shrink:0}
+.portal-body .sidebar .brand small{color:#a5d8fa}
+.portal-body .sidebar-label{
+ color:#c0e3fb;font-size:11px;font-weight:800;letter-spacing:1.4px;
+ margin:27px 0 14px;padding:10px 12px;background:#ffffff0c;
+ border:1px solid #ffffff26;border-radius:9px;flex-shrink:0;
+}
+.portal-body .sidebar nav{gap:8px;padding:3px;scrollbar-width:thin;scrollbar-color:#6387a5 transparent}
+.portal-body .sidebar nav a{
+ color:#f0f7ff;background:#ffffff08;border:1px solid #ffffff20;
+ min-height:46px;border-radius:10px;padding:11px 12px;
+ font-size:13px;font-weight:800;line-height:1.35;
+ transition:background .16s,border-color .16s,box-shadow .16s;
+}
+.portal-body .sidebar nav a:hover{color:#fff;background:#ffffff18;border-color:#8dbbdd;text-decoration:none}
+.portal-body .sidebar nav a.active{
+ color:#10375f;background:#e8f5ff;border-color:#b6ddf7;
+ box-shadow:inset 4px 0 0 #57b8ee,0 3px 10px #00000012;
+}
+.portal-body .sidebar nav a:focus-visible{outline:3px solid #8dd6ff;outline-offset:1px}
+.portal-body .sidebar .nav-icon{color:#b1dfff;flex-shrink:0}
+.portal-body .sidebar nav a.active .nav-icon{color:#145f98}
+.portal-body .sidebar-bottom{border-top-color:#ffffff26;margin-top:18px;padding:15px 10px 0;flex-shrink:0}
+.portal-body .sidebar-bottom a{color:#d4ebff;font-weight:700;min-height:32px;display:flex;align-items:center}
+.portal-body .sidebar-bottom p{color:#aec8df}
+.portal-body .portal-top{background:#eef3f8;border-bottom-color:#cad8e4}
+.portal-body #breadcrumb{color:#244965;font-weight:700}
+.portal-body #user-name{color:#244965;font-weight:700}
+.portal-body .button{
+ min-height:46px;border-radius:10px;background:#eaf0f6;color:#153c60;
+ border:1px solid #b8cbdc;font-size:14px;font-weight:800;padding:11px 17px;
+ box-shadow:0 2px 3px #153c6008;
+ transition:background .16s,border-color .16s,box-shadow .16s,transform .16s;
+}
+.portal-body .button:hover:not(:disabled){background:#dce9f5;border-color:#81a9cb;box-shadow:0 3px 8px #153c6014;text-decoration:none;transform:translateY(-1px)}
+.portal-body .button:active:not(:disabled){transform:translateY(0);box-shadow:none}
+.portal-body .button.primary{background:#145f98;border-color:#145f98;color:#fff;box-shadow:0 3px 7px #145f9826}
+.portal-body .button.primary:hover:not(:disabled){background:#104b79;border-color:#104b79;color:#fff}
+.portal-body .comfort-card .button{background:#edf6ff;border-color:#d1e7f7;color:#10375f}
+.portal-body .text-button{
+ color:#153c60;background:#e7eef5;border:1px solid #c0d1df;border-radius:9px;
+ min-height:42px;padding:9px 13px;font-weight:800;font-size:13px;
+ transition:background .16s,border-color .16s;
+}
+.portal-body .text-button:hover:not(:disabled){background:#d8e7f3;border-color:#83a8c6}
+.portal-body #workspace a:not(.button):not(.stat){font-weight:700;text-decoration:underline;text-underline-offset:3px}
+.portal-body .actions{flex-wrap:wrap;gap:12px;align-items:center}
+.portal-body a.stat{position:relative;border-color:#c4d5e3;border-width:1px;box-shadow:0 3px 10px #163b5b08;padding-right:44px;transition:border-color .16s,box-shadow .16s,transform .16s}
+.portal-body a.stat::after{content:'→';position:absolute;right:18px;top:17px;color:#145f98;font-size:20px;font-weight:800}
+.portal-body a.stat p{color:#355775;font-weight:800}
+.portal-body a.stat:hover{background:#f4faff;border-color:#7cafd1;box-shadow:0 7px 18px #163b5b12;transform:translateY(-2px)}
+.portal-body .portal-footer a{font-weight:700;text-decoration:underline;text-underline-offset:3px}
+.portal-body .dialog-close{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border:1px solid #c0d1df;border-radius:10px;background:#eaf0f6;color:#153c60;font-weight:700;line-height:1;padding:0}
+.portal-body .dialog-close:hover{background:#d8e7f3}
+.portal-body #detail-content>h2{padding-right:40px}
+@media(max-width:760px){
+ .portal-body .sidebar{padding:17px 16px 14px;border-bottom:1px solid #234969;box-shadow:0 5px 18px #102f4d12}
+ .portal-body .sidebar .brand{font-size:11px}
+ .portal-body .sidebar-label{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:15px 0 11px;font-size:11px;padding:8px 10px}
+ .portal-body .sidebar-label::after{content:'SWIPE FOR MORE →';font-size:9px;letter-spacing:.5px;font-weight:700;color:#b9d9ef;white-space:nowrap}
+ .portal-body .sidebar nav{margin-top:0;gap:9px;padding:3px 3px 8px;overflow-x:auto;overflow-y:hidden;scroll-padding-inline:3px;overscroll-behavior-inline:contain;scrollbar-width:thin}
+ .portal-body .sidebar nav a{flex:0 0 auto;min-height:46px;font-size:13px;padding:12px 16px;border-radius:10px}
+ .portal-body .sidebar nav a.active{box-shadow:inset 0 -3px 0 #57b8ee}
+ .portal-body .sidebar-bottom{display:none}
+ .portal-body .portal-top{height:auto;min-height:68px;padding:12px 16px}
+ .portal-body .user-menu{gap:8px;flex-wrap:wrap}
+ .portal-body #user-name{overflow-wrap:anywhere;flex:1;min-width:0}
+ .portal-body .user-menu .text-button{flex-shrink:0}
+ .portal-body .page-head>.button{width:100%}
+ .portal-body .actions{gap:10px}
+ .portal-body .actions>.button{flex:1 1 150px;white-space:normal}
+ .portal-body .filters>.button{flex:1 1 120px}
+ .portal-body .pager{flex-wrap:wrap}
+ .portal-body .pager>div{flex-wrap:wrap}
+ .portal-body a.stat{padding-right:40px}
+}
+@media(prefers-reduced-motion:reduce){
+ .portal-body .button,.portal-body a.stat,.portal-body .sidebar nav a,.portal-body .text-button{transition:none}
+ .portal-body .button:hover:not(:disabled),.portal-body a.stat:hover{transform:none}
+}
