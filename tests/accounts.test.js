@@ -282,6 +282,23 @@ test('portal roles enforce customer ownership and keep admin notes and credentia
   assert.equal((await request('admin/requests/'+id,{...same,priority:'bad'},{method:'PATCH',headers:admin.headers})).status,400);
   assert.equal((await request('admin/requests/'+id,{...same,follow_up_on:'2026-02-30'},{method:'PATCH',headers:admin.headers})).status,400);
   assert.equal((await request('admin/requests/'+id,same,{method:'PATCH',headers:admin.headers})).status,200);
+  assert.equal((await request('admin/requests',{account_id:customer.id,address_id:address.id,service:'Diagnosis',description:'Phone request'},{headers:customer.headers})).status,403);
+  assert.equal((await request('admin/requests',{account_id:customer.id,address_id:foreignAddress,service:'Diagnosis',description:'Phone request'},{headers:admin.headers})).status,404);
+  const mailCount=messages.length;
+  const phoneRequest=await request('admin/requests',{account_id:customer.id,address_id:address.id,service:'Diagnosis',description:'Phone request'},{headers:admin.headers});assert.equal(phoneRequest.status,201);assert.equal(messages.length,mailCount);
+  const phoneId=(await phoneRequest.json()).id;assert.equal((await db.query('SELECT status FROM service_requests WHERE id=$1',[phoneId])).rows[0].status,'requested');await db.query('DELETE FROM service_requests WHERE id=$1',[phoneId]);
+  assert.equal((await request('admin/schedule',undefined,{headers:customer.headers})).status,403);
+  for(const query of ['start=2026-02-30','start=2026-10-02&end=2026-10-01','page=0'])assert.equal((await request('admin/schedule?'+query,undefined,{headers:admin.headers})).status,400);
+  let bookingQueue=await (await request('admin/requests?status=needs-booking',undefined,{headers:admin.headers})).json();assert.equal(bookingQueue.total,1);
+  const appointment_at='2026-10-02T02:00:00.000Z'; // October 1 in Eastern time.
+  assert.equal((await request('admin/requests/'+id,{status:'scheduled',appointment_at},{method:'PATCH',headers:admin.headers})).status,200);
+  let agenda=await (await request('admin/schedule?start=2026-10-01&end=2026-10-01',undefined,{headers:admin.headers})).json();assert.equal(agenda.total,1);assert.equal(agenda.requests[0].internal_notes,'Private staff details');assert.equal(agenda.requests[0].customer_update,'We will contact you.');assert.equal(agenda.requests[0].email,'customer@example.test');
+  assert.equal((await (await request('admin/schedule?start=2026-10-02&end=2026-10-02',undefined,{headers:admin.headers})).json()).total,0);
+  assert.equal((await (await request('admin/requests?status=needs-booking',undefined,{headers:admin.headers})).json()).total,0);
+  await db.query('UPDATE service_requests SET appointment_at=NULL WHERE id=$1',[id]);
+  assert.equal((await (await request('admin/requests?status=needs-booking',undefined,{headers:admin.headers})).json()).total,1);
+  assert.equal((await (await request('admin/schedule',undefined,{headers:admin.headers})).json()).total,0);
+  assert.equal((await request('admin/requests/'+id,same,{method:'PATCH',headers:admin.headers})).status,200);
   const own=await (await request('requests',undefined,{headers:customer.headers})).json();assert.equal(own.requests.length,1);assert.equal(own.requests[0].status,'reviewing');assert.equal(own.requests[0].internal_notes,undefined);
   const directory=await (await request('admin/accounts?role=contractor',undefined,{headers:admin.headers})).json();assert.equal(directory.total,1);assert.equal(directory.accounts[0].id,contractor.id);assert.equal(directory.accounts[0].password_hash,undefined);
   const detail=await (await request('admin/accounts/'+customer.id,undefined,{headers:admin.headers})).json();assert.equal(detail.addresses.length,1);assert.equal(detail.equipment.length,1);assert.equal(detail.requests[0].internal_notes,'Private staff details');assert.equal(detail.account.password_hash,undefined);

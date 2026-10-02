@@ -95,3 +95,20 @@ a.stat{display:block;color:var(--ink);text-decoration:none;transition:border-col
  .portal-body .button,.portal-body a.stat,.portal-body .sidebar nav a,.portal-body .text-button{transition:none}
  .portal-body .button:hover:not(:disabled),.portal-body a.stat:hover{transform:none}
 }
+
+/* Scheduling agenda and booking queue. */
+.portal-body .schedule-summary{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:24px}
+.portal-body .schedule-summary a{flex:1 1 160px;padding:16px 18px;background:#eaf2f9;border:1px solid #b8cbdc;border-radius:12px;color:#153c60;text-decoration:none!important}
+.portal-body .schedule-summary strong{font-size:24px;margin-right:8px}
+.portal-body .schedule-layout{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:24px;align-items:start}
+.portal-body .schedule-layout>.panel{min-width:0}
+.portal-body .schedule-card{padding:19px 0;border-bottom:1px solid #cad8e4}
+.portal-body .schedule-card p{margin:10px 0}
+.portal-body .schedule-card-head{display:flex;justify-content:space-between;align-items:start;gap:12px}
+.portal-body .schedule-card-head .eyebrow{color:#145f98;margin:0 0 8px}
+.portal-body .schedule-contact{margin:16px 0 12px}
+.portal-body .schedule-contact .button{padding:9px 12px;min-height:44px;font-size:13px}
+.portal-body .schedule-day{background:#153c60;color:#fff;border-radius:9px;padding:12px 15px;margin:24px 0 0}
+.portal-body .schedule-presets{margin:0 0 20px}
+.portal-body .schedule-layout+.panel{margin-top:24px}
+@media(max-width:1100px){.portal-body .schedule-layout{grid-template-columns:minmax(0,1fr)}}
