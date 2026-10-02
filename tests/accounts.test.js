@@ -91,7 +91,7 @@ test('password hashes are salted, checked safely and memory-heavy concurrency is
 test('SQL migration is repeatable; unique emails, token purposes and ownership foreign keys are enforced', async () => {
   await withAccounts(async ({ db }) => {
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 3);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 4);
     const id = randomUUID();
     await db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [id, 'one@example.test', 'fixture']);
     await assert.rejects(db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [randomUUID(), 'one@example.test', 'fixture']));
@@ -104,7 +104,7 @@ test('SQL migration is repeatable; unique emails, token purposes and ownership f
 test('read-only connection check accepts the runtime role and rejects administrator/migration access', async () => {
   await withAccounts(async ({ db }) => {
     await assert.rejects(checkDatabase(db), /restricted runtime/);
-    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails TO ccs_app');
+    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails,billing_pricebook,billing_settings,billing_counters,billing_documents,billing_payments TO ccs_app');
     await db.query('SET ROLE ccs_app');
     const result = await checkDatabase(db);
     assert.equal(result.user, 'ccs_app');
@@ -291,5 +291,95 @@ test('portal roles enforce customer ownership and keep admin notes and credentia
   const denied=await fetch(base+'/account/admin',{redirect:'manual',headers:{'X-Forwarded-Proto':'https',Cookie:customer.headers.Cookie}});assert.equal(denied.status,302);assert.equal(denied.headers.get('location'),'/account/dashboard');
   const page=await fetch(base+'/account/admin',{headers:{'X-Forwarded-Proto':'https',Cookie:admin.headers.Cookie}});assert.equal(page.status,200);assert.equal(page.headers.get('cache-control'),'private, no-store');
   await db.query("UPDATE customer_accounts SET state='suspended' WHERE id=$1",[admin.id]);assert.equal((await request('admin/accounts',undefined,{headers:admin.headers})).status,401);
+ });
+});
+
+test('billing uses integer money, proportional taxable discounts, and rejects unsafe totals',()=>{
+ const {calculate}=require('../backend/accounts/billing');
+ const item=(price,quantity=1000,taxable=false)=>({description:'Test service',unit:'each',unit_cents:price,quantity_milli:quantity,taxable});
+ assert.deepEqual(calculate([item(10900,1000,true)],0,663).total_cents,11623);
+ const v=calculate([item(10000,1000,true),item(10000)],2000,1000);
+ assert.equal(v.subtotal_cents,20000);assert.equal(v.tax_cents,900);assert.equal(v.total_cents,18900);
+ assert.equal(calculate([item(1,500)]).total_cents,1);
+ assert.throws(()=>calculate([item(100)],101,0));assert.throws(()=>calculate([item(100,0)]));
+ assert.throws(()=>calculate([item(100000000,1000000)]));assert.throws(()=>calculate([item(1)],0,2001));
+});
+
+test('billing drafts, publication, permissions, conversion, payment retries, reversals and PDF export',async()=>{
+ await withAccounts(async({db,request,register,login})=>{
+  for(const address of ['billing-admin@example.test','billing-alice@example.test','billing-bob@example.test','billing-contractor@example.test']){const t=await register(address);await request('verify-email',{token:t});}
+  await db.query("UPDATE customer_accounts SET role='admin' WHERE email='billing-admin@example.test'");
+  await db.query("UPDATE customer_accounts SET role='contractor' WHERE email='billing-contractor@example.test'");
+  const admin=await login('billing-admin@example.test'),alice=await login('billing-alice@example.test'),bob=await login('billing-bob@example.test'),contractor=await login('billing-contractor@example.test');
+  const ah={Cookie:admin.cookie,'X-CSRF-Token':admin.csrf},ch={Cookie:alice.cookie,'X-CSRF-Token':alice.csrf},bh={Cookie:bob.cookie,'X-CSRF-Token':bob.csrf};
+  const adminReq=(p,b,method)=>request('admin/billing/'+p,b,{headers:ah,method});
+  const getDoc=async id=>(await (await adminReq('documents/'+id)).json()).document;
+  assert.equal((await request('admin/billing/pricebook',undefined,{headers:ch})).status,403);
+  assert.equal((await request('admin/billing/pricebook',undefined,{headers:{Cookie:contractor.cookie}})).status,403);
+  assert.equal((await request('admin/billing/pricebook')).status,401);
+  assert.equal((await (await adminReq('pricebook')).json()).items[0].unit_cents,10900);
+  assert.equal((await request('admin/billing/pricebook',{},{headers:{Cookie:admin.cookie}})).status,403);
+  const addressId=(await (await request('addresses',{line1:'100 Fixture St',city:'Old Bridge',region:'NJ',postal_code:'08857'},{headers:ch})).json()).address.id;
+  const requestId=(await (await request('requests',{address_id:addressId,service:'Seasonal tune-up',description:'Test heating service'},{headers:ch})).json()).id;
+  const body={id:randomUUID(),kind:'estimate',account_id:alice.account.id,request_id:requestId,customer:{name:'Alice Example',email:'billing-alice@example.test',phone:'',address:'100 Fixture St'},items:[{description:'Heating tune-up',quantity_milli:1000,unit_cents:10900,taxable:false,unit:'system'}],discount_cents:0,tax_bps:0,due_on:'2026-12-31',notes:'Test findings',technician:'Fixture technician'};
+  assert.equal((await adminReq('documents',{...body,account_id:bob.account.id})).status,400);
+  let r=await adminReq('documents',body);assert.equal(r.status,201);let estimate=(await r.json()).document;
+  assert.equal(estimate.total_cents,10900);assert.equal(estimate.number,'EST-000001');
+  assert.equal((await (await adminReq('documents',body)).json()).document.id,estimate.id);
+  assert.equal((await adminReq('documents',{...body,notes:'Different retry'})).status,409);
+  assert.equal((await request('billing/documents/'+estimate.id,undefined,{headers:ch})).status,404);
+  assert.equal((await (await request('billing/documents',undefined,{headers:ch})).json()).documents.length,0);
+  const edit={...body,revision:estimate.revision};delete edit.id;
+  assert.equal((await adminReq('documents/'+estimate.id,{...edit,revision:9},'PATCH')).status,409);
+  assert.equal((await adminReq('documents/'+estimate.id,edit,'PATCH')).status,200);
+  estimate=await getDoc(estimate.id);
+  assert.equal((await adminReq('documents/'+estimate.id+'/status',{status:'issued',revision:estimate.revision})).status,200);
+  assert.equal((await request('billing/documents/'+estimate.id,undefined,{headers:ch})).status,200);
+  assert.equal((await request('billing/documents/'+estimate.id,undefined,{headers:bh})).status,404);
+  estimate=await getDoc(estimate.id);
+  assert.equal((await adminReq('documents/'+estimate.id,{...edit,revision:estimate.revision},'PATCH')).status,409);
+  assert.equal((await adminReq('documents/'+estimate.id+'/convert',{})).status,409);
+  assert.equal((await adminReq('documents/'+estimate.id+'/status',{status:'accepted',revision:estimate.revision})).status,200);
+  let invoice=(await (await adminReq('documents/'+estimate.id+'/convert',{})).json()).document;
+  assert.equal(invoice.kind,'invoice');assert.equal(invoice.source_estimate_id,estimate.id);assert.equal(invoice.status,'draft');assert.equal(invoice.number,'INV-000001');
+  assert.equal((await (await adminReq('documents/'+estimate.id+'/convert',{})).json()).document.id,invoice.id);
+  assert.equal((await adminReq('documents/'+invoice.id+'/payments',{id:randomUUID(),amount_cents:100,method:'cash',paid_on:'2026-01-01',reference:''})).status,409);
+  await adminReq('documents/'+invoice.id+'/status',{status:'issued',revision:invoice.revision});
+  const pay={id:randomUUID(),amount_cents:5000,method:'cash',paid_on:'2026-01-01',reference:'Test receipt'};
+  r=await adminReq('documents/'+invoice.id+'/payments',pay);assert.equal(r.status,201);invoice=(await r.json()).document;assert.equal(invoice.balance_cents,5900);
+  assert.equal((await (await adminReq('documents/'+invoice.id+'/payments',pay)).json()).document.paid_cents,5000);
+  assert.equal((await adminReq('documents/'+invoice.id+'/payments',{...pay,amount_cents:5001})).status,409);
+  assert.equal((await adminReq('documents/'+invoice.id+'/payments',{...pay,id:randomUUID(),amount_cents:5901})).status,400);
+  assert.equal((await adminReq('documents/'+invoice.id+'/payments',{...pay,id:randomUUID(),paid_on:'2099-01-01'})).status,400);
+  assert.equal((await adminReq('documents/'+invoice.id+'/status',{status:'void',revision:invoice.revision})).status,409);
+  const finalPay={...pay,id:randomUUID(),amount_cents:5900};await adminReq('documents/'+invoice.id+'/payments',finalPay);
+  invoice=await getDoc(invoice.id);assert.equal(invoice.balance_cents,0);assert.equal(invoice.paid_cents,10900);
+  const paidList=(await (await adminReq('documents?status=paid')).json()).documents;assert.equal(paidList.length,1);
+  const pdf=await request('billing/documents/'+invoice.id+'/pdf',undefined,{headers:ch});assert.equal(pdf.status,200);assert.equal(pdf.headers.get('content-type'),'application/pdf');assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,5).toString(),'%PDF-');
+  assert.equal((await request('billing/documents/'+invoice.id+'/pdf',undefined,{headers:bh})).status,404);
+  assert.equal((await adminReq('documents/'+invoice.id+'/payments/'+pay.id+'/void',{reason:'Entry entered twice'})).status,200);
+  invoice=await getDoc(invoice.id);assert.equal(invoice.balance_cents,5000);
+  const customerDoc=(await (await request('billing/documents/'+invoice.id,undefined,{headers:ch})).json()).document;assert.equal(customerDoc.payments.length,1);assert.equal(customerDoc.payments[0].reference,undefined);assert.equal(customerDoc.created_by,undefined);
+  const summary=(await (await adminReq('summary')).json()).totals;assert.equal(Number(summary.outstanding_cents),5000);assert.equal(Number(summary.collected_cents),5900);
+  const hiddenBody={...body,id:randomUUID(),kind:'invoice',request_id:null};const hidden=(await (await adminReq('documents',hiddenBody)).json()).document;await adminReq('documents/'+hidden.id+'/status',{status:'void',revision:hidden.revision});assert.equal((await request('billing/documents/'+hidden.id,undefined,{headers:ch})).status,404);
+  await db.query('CREATE ROLE billing_runtime; GRANT USAGE ON SCHEMA public TO billing_runtime; GRANT SELECT,INSERT,UPDATE ON billing_pricebook,billing_settings,billing_counters,billing_documents,billing_payments TO billing_runtime');
+  await db.query('SET ROLE billing_runtime');assert.equal((await db.query('SELECT id FROM billing_documents')).rows.length,3);await db.query('RESET ROLE');
+ });
+});
+
+test('standalone billing deployment script applies once, grants the runtime role, and validates its ledger',async()=>{
+ await withAccounts(async({db})=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const originalScript=fs.readFileSync(path.join(__dirname,'../scripts/apply-billing.sql'),'utf8');
+  assert.match(originalScript,/current_database\(\) <> 'ccs_business'/);
+  // Embedded PostgreSQL uses a fixed postgres database name; retain the production guard above.
+  const script=originalScript.replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
+  await db.query('CREATE ROLE ccs_app');
+  await db.query('DROP TABLE billing_payments,billing_documents,billing_counters,billing_settings,billing_pricebook');
+  await db.query("DELETE FROM account_schema_migrations WHERE version='004_billing.sql'");
+  await db.query(script);await db.query(script);
+  assert.equal((await db.query("SELECT count(*)::int AS count FROM account_schema_migrations WHERE version='004_billing.sql'")).rows[0].count,1);
+  assert.equal((await db.query("SELECT has_table_privilege('ccs_app','billing_documents','INSERT') AS allowed")).rows[0].allowed,true);
+  assert.equal((await db.query('SELECT count(*)::int AS count FROM billing_pricebook')).rows[0].count,1);
  });
 });

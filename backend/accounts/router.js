@@ -95,7 +95,9 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     }
     next();
   });
-  router.use(express.json({ limit: '8kb', strict: true }));
+  const normalJSON = express.json({ limit: '8kb', strict: true });
+  const billingJSON = express.json({ limit: '32kb', strict: true });
+  router.use((req,res,next) => (req.path.startsWith('/admin/billing/') ? billingJSON : normalJSON)(req,res,next));
   router.post('/register', asyncRoute(async (req, res) => {
     fields(req.body, ['email', 'password']);
     const address = email(req.body.email);
@@ -222,6 +224,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
       console.error('Service request acknowledgment delivery failed.');
     }
   } });
+  require('./billing').installBilling(router, { db, authenticated, fields, fail });
   const pages = express.Router();
   pages.use((req,res,next)=> { if(!req.secure) return res.status(403).send('HTTPS is required.'); res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'}); next(); });
   pages.get(['/dashboard','/admin','/contractor'], asyncRoute(async(req,res)=> {
@@ -235,7 +238,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
   router.pages = pages;
   router.use((_req, res) => res.status(404).json({ ok: false, error: 'Not found.' }));
   router.use((err, _req, res, _next) => {
-    const status = [400, 401, 403, 404, 429, 503].includes(err.status) ? err.status : err.type === 'entity.too.large' ? 413 : 500;
+    const status = [400, 401, 403, 404, 409, 429, 503].includes(err.status) ? err.status : err.type === 'entity.too.large' ? 413 : 500;
     if (status === 500) console.error('Account request failed.');
     if (status === 429 || status === 503) res.set('Retry-After', status === 429 ? '900' : '5');
     res.status(status).json({ ok: false, error: status === 500 ? 'Unable to process your request.' :
