@@ -25,7 +25,7 @@ function calculate(items,discount=0,taxBps=0) {
  const total=subtotal-discount+tax;integer(total,0,MAX,'total');
  return {items:lines,subtotal_cents:subtotal,discount_cents:discount,tax_bps:taxBps,tax_cents:tax,total_cents:total};
 }
-function installBilling(router,{db,authenticated,fields,fail}) {
+function installBilling(router,{db,authenticated,fields,fail,operationsMail}) {
  async function permitted(req,role='admin') {const {account}=await authenticated(req);if(account.role!==role)fail(403,'You do not have access to this area.');return account;}
  const base='/admin/billing';
  const paidSQL="coalesce((SELECT sum(p.amount_cents)::int FROM billing_payments p WHERE p.document_id=d.id AND p.voided_at IS NULL),0)";
@@ -34,7 +34,8 @@ function installBilling(router,{db,authenticated,fields,fail}) {
   if(!d)fail(404,'Document not found.');
   d.balance_cents=d.total_cents-d.paid_cents;
   d.payments=(await c.query('SELECT id,amount_cents,method,paid_on,reference,voided_at,void_reason,created_at FROM billing_payments WHERE document_id=$1 ORDER BY created_at,id',[id])).rows;
-  if(customer){delete d.created_by;delete d.creation_hash;d.payments=d.payments.filter(p=>!p.voided_at).map(({amount_cents,method,paid_on})=>({amount_cents,method,paid_on}));}
+  if(!customer)d.emails=(await c.query("SELECT id,recipient,state,attempts,sent_at,created_at FROM operations_emails WHERE document_id=$1 ORDER BY created_at DESC LIMIT 20",[id])).rows;
+  if(customer){delete d.archived_at;delete d.duplicated_from_id;delete d.created_by;delete d.creation_hash;d.payments=d.payments.filter(p=>!p.voided_at).map(({amount_cents,method,paid_on})=>({amount_cents,method,paid_on}));}
   return d;
  }
  async function lock(c,id,revision) {
@@ -86,11 +87,11 @@ function installBilling(router,{db,authenticated,fields,fail}) {
    coalesce(sum(${paidSQL}) FILTER(WHERE kind='invoice'),0)::bigint AS collected_cents FROM billing_documents d`)).rows[0];res.json({ok:true,totals});
  }));
  router.get(base+'/documents',wrap(async(req,res)=>{
-  await permitted(req);const kind=req.query.kind||'invoice',status=req.query.status||'',search=plain(req.query.search,100),page=Number(req.query.page||1);
-  if(!['estimate','invoice'].includes(kind)||!['','draft','issued','accepted','declined','void','paid','unpaid','overdue'].includes(status)||!Number.isInteger(page)||page<1||page>100000)invalid('Invalid document filter.');
-  const where=`d.kind=$1 AND ($2='' OR d.status=$2 OR ($2='paid' AND d.status='issued' AND ${paidSQL}=d.total_cents) OR ($2='unpaid' AND d.status='issued' AND ${paidSQL}<d.total_cents) OR ($2='overdue' AND d.status='issued' AND ${paidSQL}<d.total_cents AND due_on<(now() AT TIME ZONE 'America/New_York')::date)) AND ($3='' OR position(lower($3) in lower(d.number||' '||(d.customer->>'name')))>0)`;
-  const docs=(await db.query(`SELECT d.id,d.number,d.kind,d.status,d.customer,d.total_cents,d.due_on,d.created_at,${paidSQL} AS paid_cents FROM billing_documents d WHERE ${where} ORDER BY d.created_at DESC,d.id LIMIT 25 OFFSET $4`,[kind,status,search,(page-1)*25])).rows;
-  const total=(await db.query(`SELECT count(*)::int AS count FROM billing_documents d WHERE ${where}`,[kind,status,search])).rows[0].count;
+  await permitted(req);const kind=req.query.kind||'invoice',status=req.query.status||'',search=plain(req.query.search,100),page=Number(req.query.page||1),archive=req.query.archive||'current';
+  if(!['current','archived','all'].includes(archive)||!['estimate','invoice'].includes(kind)||!['','draft','issued','accepted','declined','void','paid','unpaid','overdue'].includes(status)||!Number.isInteger(page)||page<1||page>100000)invalid('Invalid document filter.');
+  const where=`($4='all' OR ($4='current' AND d.archived_at IS NULL) OR ($4='archived' AND d.archived_at IS NOT NULL)) AND d.kind=$1 AND ($2='' OR d.status=$2 OR ($2='paid' AND d.status='issued' AND ${paidSQL}=d.total_cents) OR ($2='unpaid' AND d.status='issued' AND ${paidSQL}<d.total_cents) OR ($2='overdue' AND d.status='issued' AND ${paidSQL}<d.total_cents AND due_on<(now() AT TIME ZONE 'America/New_York')::date)) AND ($3='' OR position(lower($3) in lower(d.number||' '||(d.customer->>'name')))>0)`;
+  const docs=(await db.query(`SELECT d.id,d.number,d.kind,d.status,d.customer,d.total_cents,d.due_on,d.created_at,d.archived_at,${paidSQL} AS paid_cents FROM billing_documents d WHERE ${where} ORDER BY d.created_at DESC,d.id LIMIT 25 OFFSET $5`,[kind,status,search,archive,(page-1)*25])).rows;
+  const total=(await db.query(`SELECT count(*)::int AS count FROM billing_documents d WHERE ${where}`,[kind,status,search,archive])).rows[0].count;
   res.json({ok:true,documents:docs,total,page});
  }));
  const allowed=['id','kind','account_id','request_id','customer','items','discount_cents','tax_bps','due_on','notes','technician'];
@@ -143,9 +144,40 @@ function installBilling(router,{db,authenticated,fields,fail}) {
   const actor=await permitted(req);fields(req.body,['reason']);const reason=plain(req.body.reason,500,true);
   await db.transaction(async c=>{const d=await lock(c,req.params.id);const p=(await c.query('SELECT id,voided_at FROM billing_payments WHERE id=$1 AND document_id=$2',[uuid(req.params.payment),d.id])).rows[0];if(!p)fail(404,'Payment not found.');if(!p.voided_at){await c.query('UPDATE billing_payments SET voided_at=now(),void_reason=$1,voided_by=$2 WHERE id=$3',[reason,actor.id,p.id]);await c.query('UPDATE billing_documents SET revision=revision+1,updated_at=now() WHERE id=$1',[d.id]);}});res.json({ok:true});
  }));
+
+ router.post(base+'/documents/:id/archive',wrap(async(req,res)=>{
+  await permitted(req);fields(req.body,['archived','revision']);if(typeof req.body.archived!=='boolean')invalid('Choose archive or restore.');
+  const doc=await db.transaction(async c=>{const old=await lock(c,req.params.id,integer(req.body.revision,1,2147483647,'revision'));await c.query('UPDATE billing_documents SET archived_at=CASE WHEN $1 THEN now() ELSE NULL END,revision=revision+1,updated_at=now() WHERE id=$2',[req.body.archived,old.id]);return detail(c,old.id);});res.json({ok:true,document:doc});
+ }));
+ router.delete(base+'/documents/:id',wrap(async(req,res)=>{
+  await permitted(req);fields(req.body,['revision']);
+  await db.transaction(async c=>{const old=await lock(c,req.params.id,integer(req.body.revision,1,2147483647,'revision'));
+   if(old.status!=='draft'||old.issued_at)fail(409,'Only unissued drafts can be deleted. Archive issued documents instead.');
+   if((await c.query(`SELECT 1 FROM billing_payments WHERE document_id=$1 UNION ALL SELECT 1 FROM operations_emails WHERE document_id=$1 UNION ALL SELECT 1 FROM equipment_service_history WHERE document_id=$1 UNION ALL SELECT 1 FROM billing_documents WHERE source_estimate_id=$1 OR duplicated_from_id=$1 LIMIT 1`,[old.id])).rows.length)fail(409,'This draft has linked records. Void or archive it instead.');
+   await c.query('DELETE FROM billing_documents WHERE id=$1',[old.id]);});res.json({ok:true});
+ }));
+ router.post(base+'/documents/:id/duplicate',wrap(async(req,res)=>{
+  const actor=await permitted(req);fields(req.body,['id']);const id=uuid(req.body.id);
+  const doc=await db.transaction(async c=>{const source=await lock(c,req.params.id),existing=(await c.query('SELECT id,duplicated_from_id,created_by FROM billing_documents WHERE id=$1',[id])).rows[0];
+   if(existing){if(existing.duplicated_from_id!==source.id||existing.created_by!==actor.id)fail(409,'This duplicate identifier is already in use.');return detail(c,id);}
+   const draft=await insert(c,{kind:source.kind,account_id:source.account_id,request_id:null,customer:source.customer,items:source.items,subtotal_cents:source.subtotal_cents,discount_cents:source.discount_cents,tax_bps:source.tax_bps,tax_cents:source.tax_cents,total_cents:source.total_cents,due_on:null,notes:'',technician:source.technician},actor,id);
+   await c.query('UPDATE billing_documents SET duplicated_from_id=$1 WHERE id=$2',[source.id,draft.id]);return detail(c,draft.id);});res.status(201).json({ok:true,document:doc});
+ }));
+ router.post(base+'/documents/:id/email',wrap(async(req,res)=>{
+  await permitted(req);fields(req.body,['id']);const id=uuid(req.body.id);
+  const queued=await db.transaction(async c=>{const old=await lock(c,req.params.id);if(!old.issued_at||!['issued','accepted'].includes(old.status))fail(409,'Issue an active document before emailing it.');
+   const recipient=old.customer.email;if(!recipient||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient))invalid('This document needs a valid customer email.');
+   const key='document:'+id,existing=(await c.query('SELECT id,document_id,state FROM operations_emails WHERE dedupe_key=$1',[key])).rows[0];
+   if(existing){if(existing.document_id!==old.id)fail(409,'Email identifier is already in use.');return existing;}
+   const recent=(await c.query("SELECT count(*)::int AS count FROM operations_emails WHERE document_id=$1 AND created_at>now()-interval '1 hour'",[old.id])).rows[0].count;if(recent>=5)fail(429,'Too many document emails. Try again later.');
+   const document=await detail(c,old.id);delete document.emails;delete document.creation_hash;delete document.created_by;
+   const payload={subject:old.number+' | Community Comfort Solutions',text:`Hello ${old.customer.name},\n\nYour ${old.kind} ${old.number} is attached as a PDF. Please contact us at 917-608-3201 with any questions.\n\nCommunity Comfort Solutions`,document};
+   await c.query('INSERT INTO operations_emails(id,document_id,category,dedupe_key,recipient,payload) VALUES($1,$2,$3,$4,$5,$6)',[id,old.id,'document',key,recipient,JSON.stringify(payload)]);return {id,state:'queued'};
+  });let email=queued.state;if(email==='queued'){try{email=await operationsMail.deliver(queued.id);}catch(_){email='queued';}}res.json({ok:true,email,id:queued.id});
+ }));
  router.get('/billing/documents',wrap(async(req,res)=>{const a=await permitted(req,'customer');res.json({ok:true,documents:(await db.query(`SELECT d.id,d.number,d.kind,d.status,d.customer,d.total_cents,d.due_on,d.created_at,${paidSQL} AS paid_cents FROM billing_documents d WHERE d.account_id=$1 AND d.issued_at IS NOT NULL ORDER BY created_at DESC LIMIT 200`,[a.id])).rows});}));
  async function accessible(req,id) {const {account}=await authenticated(req);if(!['admin','customer'].includes(account.role))fail(403,'You do not have access to this area.');const d=await detail(db,uuid(id),account.role==='customer');if(account.role==='customer'&&(d.account_id!==account.id||!d.issued_at))fail(404,'Document not found.');return d;}
  router.get('/billing/documents/:id',wrap(async(req,res)=>res.json({ok:true,document:await accessible(req,req.params.id)})));
  router.get('/billing/documents/:id/pdf',wrap(async(req,res)=>{const d=await accessible(req,req.params.id);const buffer=await require('./billing-pdf').invoicePDF(d);res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="${d.number}.pdf"`});res.send(buffer);}));
 }
-module.exports={installBilling,calculate};
+module.exports={installBilling,calculate,plain,uuid,day,integer};

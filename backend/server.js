@@ -238,7 +238,8 @@ if (require.main === module) {
     let mailTimer, mailBusy=false;
     if(db){
       const worker=require('./accounts/notifications').createRequestNotifications({db,mailTransport:transporter,from:SMTP_FROM});
-      const drain=async()=>{if(mailBusy)return;mailBusy=true;try{await worker.drain();}catch(_){console.error('Service request email retry unavailable.');}finally{mailBusy=false;}};
+      const operations=require('./accounts/operations-mail').createOperationsMail({db,mailTransport:transporter,from:SMTP_FROM,origin:config.origin});
+      const drain=async()=>{if(mailBusy)return;mailBusy=true;try{try{await worker.drain();}catch(_){console.error('Service request email retry unavailable.');}try{await operations.drain();}catch(_){console.error('Operations email worker unavailable.');}}finally{mailBusy=false;}};
       mailTimer=setInterval(drain,60000);mailTimer.unref();drain();
     }
     let stopping = false;

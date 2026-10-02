@@ -1,5 +1,7 @@
 # Community Comfort Solutions billing update
 
+For the current invoice archive/delete/duplicate/email tools, equipment service history, and maintenance reminders, see OPERATIONS_UPDATE.md. The setup below documents the original billing release.
+
 Built against GitHub main commit 34bc790. This adds billing to the existing Express/PostgreSQL portals. It does not deploy itself or change account credentials.
 
 ## Included

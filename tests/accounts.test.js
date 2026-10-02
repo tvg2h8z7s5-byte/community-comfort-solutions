@@ -91,7 +91,7 @@ test('password hashes are salted, checked safely and memory-heavy concurrency is
 test('SQL migration is repeatable; unique emails, token purposes and ownership foreign keys are enforced', async () => {
   await withAccounts(async ({ db }) => {
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 4);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 5);
     const id = randomUUID();
     await db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [id, 'one@example.test', 'fixture']);
     await assert.rejects(db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [randomUUID(), 'one@example.test', 'fixture']));
@@ -104,7 +104,7 @@ test('SQL migration is repeatable; unique emails, token purposes and ownership f
 test('read-only connection check accepts the runtime role and rejects administrator/migration access', async () => {
   await withAccounts(async ({ db }) => {
     await assert.rejects(checkDatabase(db), /restricted runtime/);
-    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails,billing_pricebook,billing_settings,billing_counters,billing_documents,billing_payments TO ccs_app');
+    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails,billing_pricebook,billing_settings,billing_counters,billing_documents,billing_payments,equipment_service_history,maintenance_plans,operations_emails TO ccs_app');
     await db.query('SET ROLE ccs_app');
     const result = await checkDatabase(db);
     assert.equal(result.user, 'ccs_app');
@@ -375,11 +375,96 @@ test('standalone billing deployment script applies once, grants the runtime role
   // Embedded PostgreSQL uses a fixed postgres database name; retain the production guard above.
   const script=originalScript.replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
   await db.query('CREATE ROLE ccs_app');
-  await db.query('DROP TABLE billing_payments,billing_documents,billing_counters,billing_settings,billing_pricebook');
+  await db.query('DROP TABLE equipment_service_history,maintenance_plans,operations_emails,billing_payments,billing_documents,billing_counters,billing_settings,billing_pricebook');
   await db.query("DELETE FROM account_schema_migrations WHERE version='004_billing.sql'");
   await db.query(script);await db.query(script);
   assert.equal((await db.query("SELECT count(*)::int AS count FROM account_schema_migrations WHERE version='004_billing.sql'")).rows[0].count,1);
   assert.equal((await db.query("SELECT has_table_privilege('ccs_app','billing_documents','INSERT') AS allowed")).rows[0].allowed,true);
   assert.equal((await db.query('SELECT count(*)::int AS count FROM billing_pricebook')).rows[0].count,1);
+ });
+});
+
+test('operations archive, deletion, duplication, PDF email retry, service history ownership and plan reminders',async()=>{
+ await withAccounts(async({db,request,register,login,messages,setMailFailure})=>{
+  for(const email of ['ops-admin@example.test','ops-customer@example.test','ops-other@example.test','ops-contractor@example.test']){const t=await register(email);await request('verify-email',{token:t});}
+  await db.query("UPDATE customer_accounts SET role='admin' WHERE email='ops-admin@example.test'");await db.query("UPDATE customer_accounts SET role='contractor' WHERE email='ops-contractor@example.test'");
+  const admin=await login('ops-admin@example.test'),customer=await login('ops-customer@example.test'),other=await login('ops-other@example.test'),contractor=await login('ops-contractor@example.test');
+  const ah={Cookie:admin.cookie,'X-CSRF-Token':admin.csrf},ch={Cookie:customer.cookie,'X-CSRF-Token':customer.csrf},oh={Cookie:other.cookie,'X-CSRF-Token':other.csrf};
+  const op=(route,b,method)=>request('admin/operations/'+route,b,{headers:ah,method}),bill=(route,b,method)=>request('admin/billing/'+route,b,{headers:ah,method});
+  const loadDoc=async id=>(await (await bill('documents/'+id)).json()).document;
+  assert.equal((await request('admin/operations/equipment',undefined,{headers:ch})).status,403);
+  assert.equal((await request('admin/operations/plans',undefined,{headers:{Cookie:contractor.cookie}})).status,403);
+  assert.equal((await request('admin/operations/emails')).status,401);
+  assert.equal((await request('admin/operations/plans',{},{headers:{Cookie:admin.cookie}})).status,403);
+  const address=(await (await request('addresses',{line1:'100 Example St',city:'Old Bridge',region:'NJ',postal_code:'08857'},{headers:ch})).json()).address.id;
+  const eqBody={account_id:customer.account.id,address_id:address,name:'Main furnace',type:'Furnace',manufacturer:'Fixture',model:'TEST',serial_number:'SN001'};
+  assert.equal((await op('equipment',{...eqBody,account_id:other.account.id})).status,404);
+  const eq=(await (await op('equipment',eqBody)).json()).id;assert.ok(eq);
+  const reqId=(await (await request('requests',{address_id:address,service:'Seasonal tune-up',description:'Test service'},{headers:ch})).json()).id;
+  const docBody={id:randomUUID(),kind:'invoice',account_id:customer.account.id,request_id:reqId,customer:{name:'Fixture Customer',email:'ops-customer@example.test',phone:'',address:'100 Example St'},items:[{description:'Heating tune-up',quantity_milli:1000,unit_cents:10900,taxable:false,unit:'system'}],discount_cents:0,tax_bps:0,due_on:null,notes:'Customer invoice notes',technician:'Fixture technician'};
+  let doc=(await (await bill('documents',docBody)).json()).document;
+  assert.equal((await bill('documents/'+doc.id+'/email',{id:randomUUID()})).status,409);
+  assert.equal((await bill('documents/'+doc.id+'/status',{status:'issued',revision:doc.revision})).status,200);doc=await loadDoc(doc.id);
+  assert.equal((await bill('documents/'+doc.id,{revision:doc.revision},'DELETE')).status,409);
+  const archived=await bill('documents/'+doc.id+'/archive',{archived:true,revision:doc.revision});assert.equal(archived.status,200);doc=(await archived.json()).document;
+  assert.equal((await (await bill('documents')).json()).documents.length,0);assert.equal((await (await bill('documents?archive=archived')).json()).documents.length,1);
+  assert.equal((await request('billing/documents/'+doc.id,undefined,{headers:ch})).status,200);
+  assert.equal(Number((await (await bill('summary')).json()).totals.outstanding_cents),10900);
+  await bill('documents/'+doc.id+'/archive',{archived:false,revision:doc.revision});doc=await loadDoc(doc.id);
+  const duplicateId=randomUUID(),duplicate=(await (await bill('documents/'+doc.id+'/duplicate',{id:duplicateId})).json()).document;
+  assert.equal(duplicate.status,'draft');assert.equal(duplicate.request_id,null);assert.equal(duplicate.notes,'');assert.equal(duplicate.total_cents,10900);assert.equal(duplicate.duplicated_from_id,doc.id);
+  assert.equal((await (await bill('documents/'+doc.id+'/duplicate',{id:duplicateId})).json()).document.id,duplicate.id);
+  assert.equal((await bill('documents/'+duplicate.id,{revision:duplicate.revision},'DELETE')).status,200);assert.equal((await bill('documents/'+duplicate.id)).status,404);
+  const emailId=randomUUID();setMailFailure(true);let mail=await bill('documents/'+doc.id+'/email',{id:emailId});assert.equal((await mail.json()).email,'queued');assert.equal((await db.query('SELECT state FROM operations_emails WHERE id=$1',[emailId])).rows[0].state,'queued');
+  setMailFailure(false);await db.query('UPDATE operations_emails SET next_attempt_at=now() WHERE id=$1',[emailId]);
+  const worker=require('../backend/accounts/operations-mail').createOperationsMail({db,mailTransport:{sendMail:async m=>{messages.push(m);return {accepted:[m.to]};}},from:'Fixture <fixture@example.test>',origin:ORIGIN});
+  assert.equal(await worker.deliver(emailId),'sent');assert.equal(messages.at(-1).attachments[0].filename,doc.number+'.pdf');assert.equal(messages.at(-1).attachments[0].content.subarray(0,5).toString(),'%PDF-');
+  const mailCount=messages.length;assert.equal((await (await bill('documents/'+doc.id+'/email',{id:emailId})).json()).email,'sent');assert.equal(messages.length,mailCount);
+  const today=(await db.query("SELECT (now() AT TIME ZONE 'America/New_York')::date::text AS today")).rows[0].today;
+  const history={id:randomUUID(),request_id:reqId,document_id:doc.id,serviced_on:today,service:'Heating tune-up',findings:'Electrical connections checked',work_performed:'Cleaned heating elements',recommendations:'Inspect filter monthly',internal_notes:'PRIVATE STAFF NOTE',technician:'Fixture technician'};
+  assert.equal((await op('equipment/'+eq+'/history',history)).status,201);assert.equal((await op('equipment/'+eq+'/history',history)).status,201);
+  assert.equal((await op('equipment/'+eq+'/history',{...history,findings:'Changed retry'})).status,409);
+  assert.equal((await op('equipment/'+eq+'/history',{...history,id:randomUUID(),serviced_on:'2099-01-01'})).status,400);
+  const own=(await (await request('service-history',undefined,{headers:ch})).json()).history;assert.equal(own.length,1);assert.equal(own[0].internal_notes,undefined);assert.equal(own[0].document_id,doc.id);
+  assert.equal((await (await request('service-history',undefined,{headers:oh})).json()).history.length,0);
+  let hist=(await (await op('equipment/'+eq)).json()).history[0];assert.equal(hist.internal_notes,'PRIVATE STAFF NOTE');
+  assert.equal((await op('history/'+hist.id+'/archive',{archived:true,revision:hist.revision})).status,200);assert.equal((await (await request('service-history',undefined,{headers:ch})).json()).history.length,0);
+  hist=(await (await op('equipment/'+eq)).json()).history[0];await op('history/'+hist.id+'/archive',{archived:false,revision:hist.revision});
+  assert.equal((await (await op('equipment/'+eq+'/links')).json()).invoices[0].id,doc.id);
+  const plan={id:randomUUID(),equipment_id:eq,name:'Seasonal maintenance',annual_cents:18900,status:'active',next_service_on:today,renew_on:today,reminder_days:14,email_reminders:false,notes:'Two seasonal tune-ups per year'};
+  assert.equal((await op('plans',plan)).status,201);assert.equal((await op('plans',plan)).status,201);assert.equal((await op('plans',{...plan,id:randomUUID()})).status,409);
+  await worker.schedule();assert.equal((await db.query("SELECT count(*)::int AS count FROM operations_emails WHERE plan_id=$1",[plan.id])).rows[0].count,0);
+  assert.equal((await request('maintenance/'+plan.id+'/reminders',{enabled:true},{headers:oh,method:'PATCH'})).status,404);
+  assert.equal((await request('maintenance/'+plan.id+'/reminders',{enabled:true},{headers:ch,method:'PATCH'})).status,200);
+  await worker.schedule();await worker.schedule();let reminderRows=(await db.query('SELECT * FROM operations_emails WHERE plan_id=$1 ORDER BY category',[plan.id])).rows;assert.equal(reminderRows.length,2);
+  await request('maintenance/'+plan.id+'/reminders',{enabled:false},{headers:ch,method:'PATCH'});assert.equal(await worker.deliver(reminderRows[0].id),'cancelled');assert.equal(messages.length,mailCount);
+  await request('maintenance/'+plan.id+'/reminders',{enabled:true},{headers:ch,method:'PATCH'});assert.equal((await op('emails/'+reminderRows[0].id+'/retry',{})).status,200);
+  assert.equal((await db.query('SELECT state FROM operations_emails WHERE id=$1',[reminderRows[0].id])).rows[0].state,'sent');
+  const currentPlan=(await (await op('plans')).json()).plans[0];const change={...plan,revision:currentPlan.revision,status:'paused'};delete change.id;assert.equal((await op('plans/'+plan.id,change,'PATCH')).status,200);
+  assert.equal(await worker.deliver(reminderRows[1].id),'cancelled');
+  assert.equal((await (await request('maintenance',undefined,{headers:ch})).json()).plans[0].status,'paused');
+  assert.equal((await (await request('maintenance',undefined,{headers:oh})).json()).plans.length,0);
+  assert.equal((await (await op('emails')).json()).emails.length,3);
+  const failId=randomUUID();setMailFailure(true);await bill('documents/'+doc.id+'/email',{id:failId});
+  const failingWorker=require('../backend/accounts/operations-mail').createOperationsMail({db,mailTransport:{sendMail:async()=>{throw Error('fixture SMTP failure');}},from:'Fixture <fixture@example.test>',origin:ORIGIN});
+  for(let i=0;i<7;i++){await db.query('UPDATE operations_emails SET next_attempt_at=now() WHERE id=$1',[failId]);await failingWorker.deliver(failId);}
+  const failed=(await db.query('SELECT state,attempts FROM operations_emails WHERE id=$1',[failId])).rows[0];assert.equal(failed.state,'failed');assert.equal(failed.attempts,8);
+  await failingWorker.deliver(failId);assert.equal((await db.query('SELECT attempts FROM operations_emails WHERE id=$1',[failId])).rows[0].attempts,8);
+  setMailFailure(false);assert.equal((await (await op('emails/'+failId+'/retry',{})).json()).email,'sent');
+
+ });
+});
+
+test('standalone operations migration is repeatable and grants only the required table access',async()=>{
+ await withAccounts(async({db})=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const original=fs.readFileSync(path.join(__dirname,'../scripts/apply-operations.sql'),'utf8');assert.match(original,/current_database\(\) <> 'ccs_business'/);
+  const script=original.replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
+  await db.query('CREATE ROLE ccs_app');await db.query('DROP TABLE operations_emails,equipment_service_history,maintenance_plans');await db.query('ALTER TABLE billing_documents DROP COLUMN archived_at,DROP COLUMN duplicated_from_id');
+  await db.query("DELETE FROM account_schema_migrations WHERE version='005_operations.sql'");await db.query(script);await db.query(script);
+  assert.equal((await db.query("SELECT count(*)::int AS count FROM account_schema_migrations WHERE version='005_operations.sql'")).rows[0].count,1);
+  assert.equal((await db.query("SELECT has_table_privilege('ccs_app','billing_documents','DELETE') AS allowed")).rows[0].allowed,true);
+  assert.equal((await db.query("SELECT has_table_privilege('ccs_app','maintenance_plans','UPDATE') AS allowed")).rows[0].allowed,true);
+  assert.equal((await db.query("SELECT has_table_privilege('ccs_app','maintenance_plans','DELETE') AS allowed")).rows[0].allowed,false);
  });
 });

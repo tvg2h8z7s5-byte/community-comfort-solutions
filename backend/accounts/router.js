@@ -97,7 +97,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
   });
   const normalJSON = express.json({ limit: '8kb', strict: true });
   const billingJSON = express.json({ limit: '32kb', strict: true });
-  router.use((req,res,next) => (req.path.startsWith('/admin/billing/') ? billingJSON : normalJSON)(req,res,next));
+  router.use((req,res,next) => ((req.path.startsWith('/admin/billing/')||req.path.startsWith('/admin/operations/')) ? billingJSON : normalJSON)(req,res,next));
   router.post('/register', asyncRoute(async (req, res) => {
     fields(req.body, ['email', 'password']);
     const address = email(req.body.email);
@@ -224,7 +224,9 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
       console.error('Service request acknowledgment delivery failed.');
     }
   } });
-  require('./billing').installBilling(router, { db, authenticated, fields, fail });
+  const operationsMail=require('./operations-mail').createOperationsMail({db,mailTransport,from,origin});
+  require('./billing').installBilling(router, { db, authenticated, fields, fail, operationsMail });
+  require('./operations').installOperations(router, {db,authenticated,fields,fail,operationsMail});
   const pages = express.Router();
   pages.use((req,res,next)=> { if(!req.secure) return res.status(403).send('HTTPS is required.'); res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'}); next(); });
   pages.get(['/dashboard','/admin','/contractor'], asyncRoute(async(req,res)=> {
