@@ -2,6 +2,7 @@
 const { randomUUID, createHash } = require('node:crypto');
 const wrap = fn => (req,res,next) => Promise.resolve(fn(req,res)).catch(next);
 const MAX = 100000000;
+const pricebookCatalog = require('./pricebook-catalog.json');
 function invalid(message) { const e=new Error(message); e.status=400; throw e; }
 function integer(v,min,max,label) { if(!Number.isSafeInteger(v)||v<min||v>max) invalid('Enter a valid '+label+'.'); return v; }
 function plain(v,max,required=false) { if(v===undefined&&!required)return ''; if(typeof v!=='string'||v.length>max||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(v)||(required&&!v.trim()))invalid('Enter valid document details.'); return v.trim(); }
@@ -72,6 +73,27 @@ function installBilling(router,{db,authenticated,fields,fail,operationsMail}) {
   await permitted(req);const search=plain(req.query.search,100);
   const customers=(await db.query(`SELECT id,name,email,phone FROM customer_accounts WHERE role='customer' AND ($1='' OR position(lower($1) in lower(name||' '||email||' '||phone))>0) ORDER BY name,email LIMIT 50`,[search])).rows;
   res.json({ok:true,customers});
+ }));
+ router.get(base+'/pricebook-catalog',wrap(async(req,res)=>{
+  await permitted(req);
+  const existing=(await db.query('SELECT id,name,unit_cents,active FROM billing_pricebook')).rows;
+  res.json({ok:true,catalog:{...pricebookCatalog,items:pricebookCatalog.items.map(item=>({...item,existing:existing.find(p=>p.id===item.id||p.name.trim().toLowerCase()===item.name.toLowerCase())||null}))}});
+ }));
+ router.post(base+'/pricebook-catalog/import',wrap(async(req,res)=>{
+  await permitted(req);fields(req.body,['ids','parts_taxable']);
+  const ids=req.body.ids;
+  if(!Array.isArray(ids)||!ids.length||ids.length>200||ids.some(id=>typeof id!=='string'||!pricebookCatalog.items.some(item=>item.id===id))||new Set(ids).size!==ids.length||typeof req.body.parts_taxable!=='boolean')invalid('Select valid catalog items.');
+  const imported=await db.transaction(async c=>{
+   await c.query('SELECT pg_advisory_xact_lock(7349014)');
+   let imported=0;
+   for(const id of ids){const item=pricebookCatalog.items.find(item=>item.id===id);
+    const row=await c.query(`INSERT INTO billing_pricebook(id,name,category,description,unit,unit_cents,taxable,active)
+     SELECT $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::integer,$7::boolean,true WHERE NOT EXISTS(SELECT 1 FROM billing_pricebook WHERE lower(trim(name))=lower($2)) ON CONFLICT(id) DO NOTHING RETURNING id`,[item.id,item.name,item.category,item.description,item.unit,item.unit_cents,item.category==='Parts'?req.body.parts_taxable:item.taxable]);
+    imported+=row.rows.length;
+   }
+   return imported;
+  });
+  res.json({ok:true,imported,skipped:ids.length-imported});
  }));
  router.get(base+'/pricebook',wrap(async(req,res)=>{
   await permitted(req);const search=plain(req.query.search,100);

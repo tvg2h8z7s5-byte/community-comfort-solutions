@@ -485,3 +485,25 @@ test('standalone operations migration is repeatable and grants only the required
   assert.equal((await db.query("SELECT has_table_privilege('ccs_app','maintenance_plans','DELETE') AS allowed")).rows[0].allowed,false);
  });
 });
+
+test('catalog imports preserve saved prices and protect supplier costs',async()=>{
+ await withAccounts(async({db,request})=>{
+  const users={};for(const role of ['admin','customer','contractor']){const id=randomUUID(),raw=crypto.randomToken();await db.query('INSERT INTO customer_accounts(id,email,password_hash,verified_at,role) VALUES($1,$2,$3,now(),$4)',[id,role+'-catalog@example.test','fixture',role]);await db.query("INSERT INTO account_sessions(session_hash,account_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",[crypto.tokenHash(raw),id]);const Cookie='__Host-ccs_session='+raw;const session=await(await request('session',undefined,{headers:{Cookie}})).json();users[role]={Cookie,'X-CSRF-Token':session.csrfToken};}
+  for(const role of ['customer','contractor'])assert.equal((await request('admin/billing/pricebook-catalog',undefined,{headers:users[role]})).status,403);
+  assert.equal((await request('admin/billing/pricebook-catalog')).status,401);
+  const route='admin/billing/pricebook-catalog/import',catalog=(await(await request('admin/billing/pricebook-catalog',undefined,{headers:users.admin})).json()).catalog,ids=catalog.items.map(x=>x.id);
+  assert.equal(catalog.items.find(x=>x.key==='heat-tune').existing.unit_cents,10900);
+  assert.equal((await request(route,{ids,parts_taxable:false},{headers:{Cookie:users.admin.Cookie}})).status,403);
+  assert.equal((await request(route,{ids,parts_taxable:false},{headers:users.customer})).status,403);
+  for(const b of [{ids:[],parts_taxable:false},{ids:[randomUUID()],parts_taxable:false},{ids:[ids[0],ids[0]],parts_taxable:false},{ids:[ids[0]],parts_taxable:'true'}])assert.equal((await request(route,b,{headers:users.admin})).status,400);
+  const imported=await(await request(route,{ids,parts_taxable:true},{headers:users.admin})).json();assert.equal(imported.imported,ids.length-1);assert.equal(imported.skipped,1);
+  const cap=catalog.items.find(x=>x.key==='cap-TRCFD455'),saved=(await db.query('SELECT * FROM billing_pricebook WHERE id=$1',[cap.id])).rows[0];assert.equal(saved.unit_cents,3465);assert.equal(saved.taxable,true);assert.equal(saved.reference_cost_cents,undefined);assert(!saved.description.includes('reference cost'));
+  await db.query('UPDATE billing_pricebook SET unit_cents=9900,active=false WHERE id=$1',[cap.id]);
+  const repeat=await(await request(route,{ids,parts_taxable:false},{headers:users.admin})).json();assert.equal(repeat.imported,0);assert.equal(repeat.skipped,ids.length);assert.equal((await db.query('SELECT unit_cents FROM billing_pricebook WHERE id=$1',[cap.id])).rows[0].unit_cents,9900);assert.equal((await db.query('SELECT count(*)::int AS count FROM billing_pricebook')).rows[0].count,ids.length);
+ });
+});
+test('catalog markup and annual package calculations match their scope',()=>{
+ const c=require('../backend/accounts/pricebook-catalog.json'),ids=new Set();for(const p of c.items){assert(!ids.has(p.id));ids.add(p.id);assert(p.name.length+p.description.length+3<=300,p.key+' fits invoice line');assert(Number.isSafeInteger(p.unit_cents));if(p.pricing_basis==='supplier_markup')assert.equal(p.unit_cents,Math.floor((p.reference_cost_cents*11+2)/4));}
+ for(const key of ['essential','filter-care','humidity-care','complete','complete-humidity']){const item=n=>c.items.find(x=>x.key==='plan-'+key+'-'+n),extra=c.items.find(x=>x.key==='plan-'+key+'-additional');assert.equal(extra.unit_cents,Math.round(item(1).unit_cents*.9/100)*100);assert.equal(item(2).unit_cents,item(1).unit_cents+extra.unit_cents);assert.equal(item(3).unit_cents,item(1).unit_cents+2*extra.unit_cents);}
+ assert.equal(c.items.find(x=>x.key==='heat-tune').unit_cents,10900);assert.equal(c.items.find(x=>x.key==='plan-essential-1').unit_cents,18900);
+});

@@ -112,3 +112,10 @@ a.stat{display:block;color:var(--ink);text-decoration:none;transition:border-col
 .portal-body .schedule-presets{margin:0 0 20px}
 .portal-body .schedule-layout+.panel{margin-top:24px}
 @media(max-width:1100px){.portal-body .schedule-layout{grid-template-columns:minmax(0,1fr)}}
+
+/* Admin catalog review; source costs stay outside invoice descriptions. */
+.portal-body .catalog-item{padding:16px 0;border-bottom:1px solid #cad8e4}
+.portal-body .catalog-item p{font-size:13px;margin:8px 0}
+.portal-body .catalog-item summary{cursor:pointer;font-weight:800;color:#145f98;padding:8px 0}
+.portal-body .catalog-item .check-label{font-size:14px!important;align-items:flex-start}
+.portal-body .catalog-item details a{font-weight:700;text-decoration:underline}
