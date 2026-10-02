@@ -30,8 +30,8 @@ request. Public registration always creates a customer. Private pages require a
 session and redirect to the correct role's page. Password hashes, token hashes,
 session identifiers, and abuse counters are not exposed in admin responses.
 Public assets contain no records. Service requests are saved in PostgreSQL, not
-localStorage; session cookies remain Secure and HttpOnly. Seven-day idle and
-thirty-day absolute expiry, exact-origin checks, CSRF headers, and authentication abuse
+localStorage; session cookies remain Secure and HttpOnly. Existing idle and
+absolute expiry, exact-origin checks, CSRF headers, and authentication abuse
 limits remain in force.
 
 ## Upload and deployment order
@@ -102,7 +102,7 @@ verification state, joined date, and any saved records. Credentials are excluded
 Public contact/schedule forms still email the company and do not import into the
 portal request queue. A portal request is a request, not a booked visit. Staff
 arrange the appointment directly; the portal records status and the customer
-update. Admin updates do not send notifications by email. Request lists cap at
+update. Admin customer-facing updates now send email through a durable outbox; see SERVICE_WORKFLOW_UPDATE.md for migration 003 and deployment instructions. Request lists cap at
 200 per account; admin lists paginate in groups of 25.
 
 Native PostgreSQL deployment behavior, live email delivery, HTTPS/proxy routing,

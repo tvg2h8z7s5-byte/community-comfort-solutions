@@ -14,7 +14,7 @@ const fs=require('node:fs');const path=require('node:path');const assert=require
    const url=new URL(route.request().url()),name=url.pathname.replace('/api/account/','');let data={ok:true};
    if(name==='session'||name==='login')data={...data,account:{id,role,name:role==='admin'?'Robert Machado':'Alex Morgan',email:'alex@example.test',phone:'202-555-0100'},csrfToken:'fixture'};
    if(name==='addresses')data.addresses=[address];if(name==='equipment')data.equipment=[];if(name==='requests')data.requests=[request];
-   if(name==='admin/overview')data.totals={customers:1,contractors:0,unverified:0,requested:1,scheduled:0};
+   if(name==='admin/overview')data.totals={customers:1,contractors:0,unverified:0,requested:1,scheduled:0,followups:0,resolved:0,pending:0};
    if(name==='admin/accounts')data={...data,accounts:[{id,email:'alex@example.test',name:'Alex Morgan',phone:'202-555-0100',role:'customer',state:'active',verified_at:'2026-09-30',created_at:'2026-09-30'}],page:1,total:1};
    if(name==='admin/requests')data={...data,requests:[request],page:1,total:1};
    if(name.startsWith('admin/accounts/'))data={...data,account:{id,email:'alex@example.test',name:'Alex Morgan',phone:'202-555-0100',role:'customer',state:'active',verified_at:'2026-09-30',created_at:'2026-09-30'},addresses:[address],equipment:[],requests:[request]};

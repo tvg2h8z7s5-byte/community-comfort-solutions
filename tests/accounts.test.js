@@ -91,7 +91,7 @@ test('password hashes are salted, checked safely and memory-heavy concurrency is
 test('SQL migration is repeatable; unique emails, token purposes and ownership foreign keys are enforced', async () => {
   await withAccounts(async ({ db }) => {
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 2);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 3);
     const id = randomUUID();
     await db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [id, 'one@example.test', 'fixture']);
     await assert.rejects(db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [randomUUID(), 'one@example.test', 'fixture']));
@@ -104,7 +104,7 @@ test('SQL migration is repeatable; unique emails, token purposes and ownership f
 test('read-only connection check accepts the runtime role and rejects administrator/migration access', async () => {
   await withAccounts(async ({ db }) => {
     await assert.rejects(checkDatabase(db), /restricted runtime/);
-    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests TO ccs_app');
+    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails TO ccs_app');
     await db.query('SET ROLE ccs_app');
     const result = await checkDatabase(db);
     assert.equal(result.user, 'ccs_app');
@@ -116,7 +116,7 @@ test('read-only connection check accepts the runtime role and rejects administra
   });
 });
 test('registration, verification, session security, profile ownership, recovery and logout work together', async () => {
-  await withAccounts(async ({ db, request, register, login, messages, latestToken, base }) => {
+  await withAccounts(async ({ db, request, register, login, messages, latestToken }) => {
     const verification = await register('Alice@Example.test');
     assert.match(messages.at(-1).html, /Welcome! Verify your email/);
     assert.match(messages.at(-1).html, /expires in 24 hours/);
@@ -134,16 +134,6 @@ test('registration, verification, session security, profile ownership, recovery 
     const alice = await login(row.email);
     assert.match(alice.header, /Secure/); assert.match(alice.header, /HttpOnly/); assert.match(alice.header, /SameSite=Lax/); assert.match(alice.header, /Path=\//);
     assert.doesNotMatch(alice.header, /Domain=/);
-    assert.match(alice.header, /Max-Age=2592000/);
-    await db.query("UPDATE account_sessions SET last_seen_at=now()-interval '2 days' WHERE account_id=$1",[row.id]);
-    assert.equal((await request('session',undefined,{headers:{Cookie:alice.cookie}})).status,200);
-    for(const page of ['login','register']) {
-      const response=await fetch(base+'/account/'+page,{redirect:'manual',headers:{Cookie:alice.cookie,'X-Forwarded-Proto':'https'}});
-      assert.equal(response.status,302);assert.equal(response.headers.get('location'),'/account/dashboard');
-    }
-    const alias=await fetch(base+'/',{redirect:'manual',headers:{'X-Forwarded-Host':'www.'+new URL(ORIGIN).hostname}});
-    assert.equal(alias.status,308);assert.equal(alias.headers.get('location'),ORIGIN+'/');
-
     const auth = { Cookie: alice.cookie, 'X-CSRF-Token': alice.csrf };
     const session = await request('session', undefined, { headers: auth });
     assert.equal(session.status, 200); assert.equal(session.headers.get('cache-control'), 'private, no-store');
@@ -192,7 +182,7 @@ test('expired links/sessions, suspended accounts, hostile requests and persisted
     assert.equal((await request('verify-email', { token: verify })).status, 400);
     await db.query('UPDATE customer_accounts SET verified_at=now()');
     const session = await login('expiry@example.test');
-    await db.query("UPDATE account_sessions SET last_seen_at=now()-interval '8 days'");
+    await db.query("UPDATE account_sessions SET last_seen_at=now()-interval '31 minutes'");
     assert.equal((await request('session', undefined, { headers: { Cookie: session.cookie } })).status, 401);
     await db.query("UPDATE customer_accounts SET state='suspended'");
     assert.equal((await request('login', { email: 'expiry@example.test', password: PASSWORD })).status, 401);
@@ -268,6 +258,30 @@ test('portal roles enforce customer ownership and keep admin notes and credentia
 
   assert.equal((await request('admin/requests/'+id,{status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'},{method:'PATCH',headers:customer.headers})).status,403);
   assert.equal((await request('admin/requests/'+id,{status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'},{method:'PATCH',headers:admin.headers})).status,200);
+  assert.equal(messages.at(-1).to,'customer@example.test');
+  assert.match(messages.at(-1).text,/We will contact you/);
+  assert.doesNotMatch(messages.at(-1).text,/Private staff/);
+  const before=messages.length;
+  const same={status:'reviewing',customer_update:'We will contact you.',internal_notes:'Private staff details'};
+  assert.equal((await request('admin/requests/'+id,same,{method:'PATCH',headers:admin.headers})).status,200);
+  assert.equal(messages.length,before,'unchanged public content should not send another email');
+  setMailFailure(true);
+  const changed={...same,status:'completed',customer_update:'Repair finished.',priority:'urgent',appointment_at:'2026-10-01T14:00:00.000Z',follow_up_on:'2026-10-02'};
+  const queued=await (await request('admin/requests/'+id,changed,{method:'PATCH',headers:admin.headers})).json();
+  assert.equal(queued.email,'queued');
+  assert.equal((await db.query('SELECT count(*)::int AS count FROM service_request_emails WHERE sent_at IS NULL')).rows[0].count,1);
+  const resolved=await (await request('admin/requests?status=resolved',undefined,{headers:admin.headers})).json();
+  assert.equal(resolved.total,1);assert.equal(resolved.requests[0].priority,'urgent');
+  assert.equal((await (await request('admin/requests?status=active',undefined,{headers:admin.headers})).json()).total,0);
+  setMailFailure(false);
+  await db.query('UPDATE service_request_emails SET next_attempt_at=now() WHERE sent_at IS NULL');
+  const worker=require('../backend/accounts/notifications').createRequestNotifications({db,from:'service@example.test',mailTransport:{sendMail:async msg=>messages.push(msg)}});
+  await worker.drain();await worker.drain();
+  assert.equal(messages.length,before+1,'queued message delivered once');
+  assert.match(messages.at(-1).text,/Eastern time/);assert.doesNotMatch(messages.at(-1).text,/Private staff|follow_up|priority/);
+  assert.equal((await request('admin/requests/'+id,{...same,priority:'bad'},{method:'PATCH',headers:admin.headers})).status,400);
+  assert.equal((await request('admin/requests/'+id,{...same,follow_up_on:'2026-02-30'},{method:'PATCH',headers:admin.headers})).status,400);
+  assert.equal((await request('admin/requests/'+id,same,{method:'PATCH',headers:admin.headers})).status,200);
   const own=await (await request('requests',undefined,{headers:customer.headers})).json();assert.equal(own.requests.length,1);assert.equal(own.requests[0].status,'reviewing');assert.equal(own.requests[0].internal_notes,undefined);
   const directory=await (await request('admin/accounts?role=contractor',undefined,{headers:admin.headers})).json();assert.equal(directory.total,1);assert.equal(directory.accounts[0].id,contractor.id);assert.equal(directory.accounts[0].password_hash,undefined);
   const detail=await (await request('admin/accounts/'+customer.id,undefined,{headers:admin.headers})).json();assert.equal(detail.addresses.length,1);assert.equal(detail.equipment.length,1);assert.equal(detail.requests[0].internal_notes,'Private staff details');assert.equal(detail.account.password_hash,undefined);

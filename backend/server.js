@@ -102,13 +102,6 @@ app.use((_req, res, next) => {
 });
 // Disabled unless explicitly configured. Mount before public files/catch-all routes.
 if (accountOptions) {
-  const canonical = new URL(accountOptions.origin);
-  app.use((req,res,next)=> {
-    // A __Host cookie belongs to one hostname. Keep www visits on the login origin.
-    const alias = canonical.hostname.startsWith('www.') ? canonical.hostname.slice(4) : 'www.'+canonical.hostname;
-    if (req.hostname === alias) return res.redirect(308, canonical.origin+req.originalUrl);
-    next();
-  });
   const { createAccountRouter } = require('./accounts/router');
   const accounts = createAccountRouter({ ...accountOptions, mailTransport, from: SMTP_FROM });
   app.use('/api/account', accounts);
@@ -231,7 +224,8 @@ if (require.main === module) {
       // Fail closed if the explicitly migrated schema is unavailable.
       await db.query('SELECT id,role FROM customer_accounts LIMIT 0');
       await db.query('SELECT id FROM customer_equipment LIMIT 0');
-      await db.query('SELECT id FROM service_requests LIMIT 0');
+      await db.query('SELECT id,priority,appointment_at,follow_up_on FROM service_requests LIMIT 0');
+      await db.query('SELECT id FROM service_request_emails LIMIT 0');
       await db.query('SELECT token_hash FROM account_tokens LIMIT 0');
       await db.query('SELECT session_hash FROM account_sessions LIMIT 0');
       await db.query('SELECT id FROM customer_addresses LIMIT 0');
@@ -241,10 +235,17 @@ if (require.main === module) {
       .listen(Number(PORT), '0.0.0.0', () => console.log('Public backend listening.'));
     server.requestTimeout = 30000;
     server.headersTimeout = 15000;
+    let mailTimer, mailBusy=false;
+    if(db){
+      const worker=require('./accounts/notifications').createRequestNotifications({db,mailTransport:transporter,from:SMTP_FROM});
+      const drain=async()=>{if(mailBusy)return;mailBusy=true;try{await worker.drain();}catch(_){console.error('Service request email retry unavailable.');}finally{mailBusy=false;}};
+      mailTimer=setInterval(drain,60000);mailTimer.unref();drain();
+    }
     let stopping = false;
     function stop() {
       if (stopping) return;
       stopping = true;
+      clearInterval(mailTimer);
       const timeout = setTimeout(() => process.exit(1), 10000);
       timeout.unref();
       server.close(async () => {

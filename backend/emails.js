@@ -39,4 +39,12 @@ function receiptEmail({name, kind = 'contact', rows = [], portalUrl}) {
     text: `${greeting}\n\n${introduction}\n\n${next}${summary ? '\n\nYour request details\n'+summary : ''}${portalUrl ? '\n\nView your request: '+portalUrl : ''}\n\nIf you have more details, reply to this email. For urgent service needs, call 917-608-3201 to discuss availability.\n\nThank you,\nCommunity Comfort Solutions\n${SITE}`,
     html: layout(title, `<p>${escape(greeting)}</p><p>${introduction}</p><p>${next}</p>${summary ? `<h2 style="font-size:18px;color:#133754;margin-top:26px">Your request details</h2>${details(rows)}` : ''}${portalUrl ? button('View your requests',portalUrl) : ''}<p>If you have more details, reply to this email. For urgent service needs, call <a href="tel:+19176083201" style="color:#17649b">917-608-3201</a> to discuss availability.</p><p>Thank you,<br><strong>Community Comfort Solutions</strong></p>`) };
 }
-module.exports = {layout, details, accountEmail, receiptEmail};
+function serviceUpdateEmail({name, service, status, customer_update, appointment_at, id, portalUrl}) {
+ const appointment = appointment_at ? new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',dateStyle:'full',timeStyle:'short'}).format(new Date(appointment_at))+' (Eastern time)' : 'Not confirmed';
+ const rows=[['Request reference',id],['Service',service],['Status',status],['Confirmed appointment',appointment],['Team response',customer_update]];
+ const title='An update on your service request';
+ return {subject:title+' — Community Comfort Solutions',
+  text:`Hi ${name||'there'},\n\nOur team updated your service request.\n\n${rows.filter(([,v])=>v).map(([k,v])=>k+': '+v).join('\n')}\n\nView your requests: ${portalUrl}\n\nReply to this email or call 917-608-3201 with questions.`,
+  html:layout(title,`<p>Hi ${escape(name||'there')},</p><p>Our team updated your service request.</p>${details(rows)}${button('View your requests',portalUrl)}`)};
+}
+module.exports = {layout, details, accountEmail, receiptEmail, serviceUpdateEmail};
