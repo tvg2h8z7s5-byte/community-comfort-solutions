@@ -12,6 +12,8 @@ WORKDIR /app
 
 COPY backend ./backend
 COPY site ./site
+COPY scripts/install-credentials.js ./scripts/install-credentials.js
+RUN node scripts/install-credentials.js
 
 ENV NODE_ENV=production
 ENV PORT=3000
