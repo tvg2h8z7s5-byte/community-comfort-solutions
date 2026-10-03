@@ -228,7 +228,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
   const operationsMail=require('./operations-mail').createOperationsMail({db,mailTransport,from,origin});
   require('./inquiries').installInquiries(router,{db,authenticated,fields,text,fail});
   require('./billing').installBilling(router, { db, authenticated, fields, fail, operationsMail });
-  require('./operations').installOperations(router, {db,authenticated,fields,fail,operationsMail});
+  require('./operations').installOperations(router, {db,authenticated,fields,fail,operationsMail,origin,notifications:require('./notifications').createRequestNotifications({db,mailTransport,from})});
   const pages = express.Router();
   pages.use((req,res,next)=> { if(!req.secure) return res.status(403).send('HTTPS is required.'); res.set({'Cache-Control':'private, no-store','X-Robots-Tag':'noindex, nofollow','Referrer-Policy':'no-referrer'}); next(); });
   pages.get(['/dashboard','/admin','/contractor'], asyncRoute(async(req,res)=> {

@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test ../tests/public-backend.test.js ../tests/client-ip.test.js ../tests/accounts.test.js ../tests/billing-ui.test.js ../tests/scheduling-ui.test.js ../tests/inquiries-ui.test.js",
+    "test": "node --test ../tests/public-backend.test.js ../tests/client-ip.test.js ../tests/accounts.test.js ../tests/billing-ui.test.js ../tests/scheduling-ui.test.js ../tests/inquiries-ui.test.js ../tests/maintenance-ui.test.js",
     "accounts:migrate": "node accounts/migrate.js --apply",
     "accounts:cleanup": "node accounts/migrate.js --cleanup",
     "accounts:check": "node accounts/check.js"

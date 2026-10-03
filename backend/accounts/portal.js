@@ -3,7 +3,7 @@ const { randomUUID } = require('node:crypto');
 const {serviceUpdateEmail}=require('../emails');
 function installPortal(router, { db, authenticated, fields, text, fail, count, notifyRequest, origin, notifications }) {
  const uuid = value => { if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value || '')) fail(400,'Invalid record.'); return value; };
- const wrap = fn => (req,res,next) => Promise.resolve(fn(req,res)).catch(next);
+ const wrap = fn => (req,res,next) => Promise.resolve(fn(req,res)).catch(err=>{if(err.code==='23505'&&err.constraint==='service_requests_one_open_plan_visit')return next(Object.assign(new Error('This plan already has an open visit. Complete or cancel that visit before reopening another.'),{status:409}));next(err);});
  async function permitted(req,role) { const {account}=await authenticated(req); if(account.role!==role) fail(403,'You do not have access to this area.'); return account; }
  function multiline(value,max) { if(value===undefined)return ''; if(typeof value!=='string'||value.length>max||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value))fail(400,'Invalid text.'); return value.trim(); }
  const equipmentFields = ['address_id','name','type','manufacturer','model','serial_number'];

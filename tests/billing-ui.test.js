@@ -33,7 +33,7 @@ test('billing UI builds a linked estimate, saves and issues, converts, records p
   else throw Error('Unexpected fixture route '+route);
   return {status:200,ok:true,json:async()=>result};
  };
- w.eval(fs.readFileSync(root+'/site/operations.js','utf8'));w.eval(fs.readFileSync(root+'/site/billing.js','utf8'));w.eval(fs.readFileSync(root+'/site/portal.js','utf8'));
+ w.eval(fs.readFileSync(root+'/site/maintenance.js','utf8'));w.eval(fs.readFileSync(root+'/site/operations.js','utf8'));w.eval(fs.readFileSync(root+'/site/billing.js','utf8'));w.eval(fs.readFileSync(root+'/site/portal.js','utf8'));
  try{
   await settled(w,()=>!!$('#document-form'));assert.equal($('#customer-name').value,'Alex Example');assert.equal($('#request-link').value,reqId);assert.match($('#linked-customer').textContent,/alex@example/);
   $('#price-picker').value=tune.id;$('#add-from-price').click();await settled(w,()=>!!$('[data-line-description]'));
@@ -67,7 +67,7 @@ test('operations UI records service, creates a per-system plan with reminders of
   else if(/^maintenance\/[^/]+\/reminders$/.test(route))plans[0].email_reminders=body.enabled;
   else throw Error('Unexpected UI fixture route '+route);
   return {status:200,ok:true,json:async()=>result};};
- w.eval(fs.readFileSync(root+'/site/operations.js','utf8'));w.eval(fs.readFileSync(root+'/site/billing.js','utf8'));w.eval(fs.readFileSync(root+'/site/portal.js','utf8'));
+ w.eval(fs.readFileSync(root+'/site/maintenance.js','utf8'));w.eval(fs.readFileSync(root+'/site/operations.js','utf8'));w.eval(fs.readFileSync(root+'/site/billing.js','utf8'));w.eval(fs.readFileSync(root+'/site/portal.js','utf8'));
  try{
   await settled(w,()=>!!$('#add-service'));$('#add-service').click();await settled(w,()=>!!$('#history-form'));
   $('#service').value='Heating tune-up';$('#findings').value='Connections checked';$('#work_performed').value='Cleaned heating elements';$('#internal_notes').value='PRIVATE';$('#document_id').value=invoiceId;

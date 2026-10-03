@@ -232,7 +232,7 @@ if (require.main === module) {
       await db.query('SELECT id,role FROM customer_accounts LIMIT 0');
       await db.query('SELECT id FROM customer_equipment LIMIT 0');
       await db.query('SELECT id FROM website_inquiries LIMIT 0');
-      await db.query('SELECT id,priority,appointment_at,follow_up_on FROM service_requests LIMIT 0');
+      await db.query('SELECT id,priority,appointment_at,follow_up_on,maintenance_plan_id FROM service_requests LIMIT 0');
       await db.query('SELECT id FROM service_request_emails LIMIT 0');
       await db.query('SELECT token_hash FROM account_tokens LIMIT 0');
       await db.query('SELECT session_hash FROM account_sessions LIMIT 0');

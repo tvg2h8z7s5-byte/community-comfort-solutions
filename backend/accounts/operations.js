@@ -3,10 +3,10 @@ const {randomUUID,createHash}=require('node:crypto');
 const {plain,uuid,day,integer}=require('./billing');
 const wrap=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next);
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
-function installOperations(router,{db,authenticated,fields,fail,operationsMail}) {
+function installOperations(router,{db,authenticated,fields,fail,operationsMail,notifications,origin}) {
  async function permitted(req,role='admin'){const {account}=await authenticated(req);if(account.role!==role)fail(403,'You do not have access to this area.');return account;}
  function page(req){return integer(Number(req.query.page||1),1,100000,'page');}
- async function equipment(c,id){const row=(await c.query(`SELECT e.*,a.name AS customer_name,a.email,a.phone,d.line1,d.line2,d.city,d.region,d.postal_code FROM customer_equipment e JOIN customer_accounts a ON a.id=e.account_id JOIN customer_addresses d ON d.id=e.address_id WHERE e.id=$1`,[uuid(id)])).rows[0];if(!row)fail(404,'Equipment not found.');return row;}
+ async function equipment(c,id){const row=(await c.query(`SELECT e.*,a.name AS customer_name,a.email,a.phone,a.verified_at,d.line1,d.line2,d.city,d.region,d.postal_code FROM customer_equipment e JOIN customer_accounts a ON a.id=e.account_id JOIN customer_addresses d ON d.id=e.address_id WHERE e.id=$1`,[uuid(id)])).rows[0];if(!row)fail(404,'Equipment not found.');return row;}
  function checkRevision(row,v){if(integer(v,1,2147483647,'revision')!==row.revision)fail(409,'This record changed. Reload it before saving.');}
  const base='/admin/operations';
  router.get(base+'/overview',wrap(async(req,res)=>{
@@ -18,7 +18,7 @@ function installOperations(router,{db,authenticated,fields,fail,operationsMail})
    (SELECT count(*)::int FROM operations_emails WHERE state='failed') AS failed`)).rows[0];res.json({ok:true,totals:t});
  }));
  router.get(base+'/equipment',wrap(async(req,res)=>{
-  await permitted(req);const search=plain(req.query.search,100),p=page(req),filter="($1='' OR position(lower($1) in lower(e.name||' '||e.manufacturer||' '||e.model||' '||e.serial_number||' '||a.name||' '||a.email))>0)";
+  await permitted(req);const search=plain(req.query.search,100),p=page(req),filter="($1='' OR position(lower($1) in lower(e.name||' '||e.manufacturer||' '||e.model||' '||e.serial_number||' '||a.name||' '||coalesce(a.email,'')))>0)";
   const records=(await db.query(`SELECT e.*,a.name AS customer_name,a.email,d.line1,d.city,(SELECT max(serviced_on) FROM equipment_service_history h WHERE h.equipment_id=e.id AND h.archived_at IS NULL) AS last_service_on FROM customer_equipment e JOIN customer_accounts a ON a.id=e.account_id JOIN customer_addresses d ON d.id=e.address_id WHERE ${filter} ORDER BY e.created_at DESC,e.id LIMIT 25 OFFSET $2`,[search,(p-1)*25])).rows;
   const total=(await db.query(`SELECT count(*)::int AS count FROM customer_equipment e JOIN customer_accounts a ON a.id=e.account_id WHERE ${filter}`,[search])).rows[0].count;res.json({ok:true,equipment:records,total,page:p});
  }));
@@ -51,12 +51,69 @@ function installOperations(router,{db,authenticated,fields,fail,operationsMail})
  const planFields=['equipment_id','name','annual_cents','status','next_service_on','renew_on','reminder_days','email_reminders','notes'];
  async function planData(c,b){const e=await equipment(c,b.equipment_id);if(!['active','paused','cancelled'].includes(b.status)||typeof b.email_reminders!=='boolean')fail(400,'Choose valid maintenance-plan settings.');return {equipment_id:e.id,account_id:e.account_id,name:plain(b.name,150,true),annual_cents:integer(b.annual_cents,0,100000000,'annual price'),status:b.status,next_service_on:day(b.next_service_on),renew_on:day(b.renew_on),reminder_days:integer(b.reminder_days,0,60,'reminder lead time'),email_reminders:b.email_reminders,notes:plain(b.notes,2000)};}
  async function availablePlan(c,v,id){await c.query('SELECT id FROM customer_equipment WHERE id=$1 FOR UPDATE',[v.equipment_id]);if(v.status==='active'&&(await c.query("SELECT id FROM maintenance_plans WHERE equipment_id=$1 AND status='active' AND id<>$2",[v.equipment_id,id])).rows.length)fail(409,'This system already has an active maintenance plan. Pause or cancel it first.');}
+ const planJoins=`maintenance_plans p JOIN customer_equipment e ON e.id=p.equipment_id
+  JOIN customer_accounts a ON a.id=p.account_id JOIN customer_addresses d ON d.id=e.address_id
+  LEFT JOIN LATERAL (SELECT id,status,appointment_at FROM service_requests WHERE maintenance_plan_id=p.id AND status!='cancelled' AND NOT EXISTS (SELECT 1 FROM equipment_service_history h WHERE h.request_id=service_requests.id AND h.equipment_id=p.equipment_id) ORDER BY CASE WHEN status='completed' THEN 1 ELSE 0 END,created_at DESC LIMIT 1) v ON true`;
+ const planSelect=`p.*,e.name AS equipment_name,e.type,e.address_id,a.name AS customer_name,a.email,a.phone,a.verified_at,d.line1,d.city,d.region,d.postal_code,
+  v.id AS visit_id,v.status AS visit_status,v.appointment_at AS visit_appointment,
+  (SELECT max(serviced_on) FROM equipment_service_history h WHERE h.equipment_id=e.id AND h.archived_at IS NULL) AS last_service_on`;
+ const soon="(now() AT TIME ZONE 'America/New_York')::date+14";
  router.get(base+'/plans',wrap(async(req,res)=>{
-  await permitted(req);const p=page(req),search=plain(req.query.search,100),status=req.query.status||'active',due=req.query.due==='true';if(!['','active','paused','cancelled'].includes(status))fail(400,'Choose a plan status.');
-  const filter="($1='' OR p.status=$1) AND ($2='' OR position(lower($2) in lower(p.name||' '||e.name||' '||a.name||' '||a.email))>0) AND (NOT $3 OR p.next_service_on <= (now() AT TIME ZONE 'America/New_York')::date+14 OR p.renew_on <= (now() AT TIME ZONE 'America/New_York')::date+14)";
-  const joins='maintenance_plans p JOIN customer_equipment e ON e.id=p.equipment_id JOIN customer_accounts a ON a.id=p.account_id';
-  const plans=(await db.query(`SELECT p.*,e.name AS equipment_name,e.type,a.name AS customer_name,a.email FROM ${joins} WHERE ${filter} ORDER BY p.next_service_on NULLS LAST,p.renew_on NULLS LAST,p.id LIMIT 25 OFFSET $4`,[status,search,due,(p-1)*25])).rows;
-  const total=(await db.query(`SELECT count(*)::int AS count FROM ${joins} WHERE ${filter}`,[status,search,due])).rows[0].count;res.json({ok:true,plans,total,page:p});
+  await permitted(req);const p=page(req),search=plain(req.query.search,100),status=req.query.status??'active',due=req.query.due==='true',view=req.query.view||'all';
+  if(!['','active','paused','cancelled'].includes(status)||!['all','service','scheduled','renewal','missing'].includes(view))fail(400,'Choose a plan filter.');
+  const filter=`($1='' OR p.status=$1) AND ($2='' OR position(lower($2) in lower(p.name||' '||e.name||' '||a.name||' '||coalesce(a.email,'')||' '||a.phone))>0)
+   AND (NOT $3 OR p.next_service_on <= ${soon} OR p.renew_on <= ${soon})
+   AND ($4='all' OR ($4='service' AND p.status='active' AND p.next_service_on <= ${soon} AND coalesce(v.status,'')!='scheduled')
+    OR ($4='scheduled' AND v.status='scheduled') OR ($4='renewal' AND p.status='active' AND p.renew_on <= ${soon})
+    OR ($4='missing' AND p.status='active' AND (p.next_service_on IS NULL OR p.renew_on IS NULL)))`;
+  const values=[status,search,due,view];
+  const plans=(await db.query(`SELECT ${planSelect} FROM ${planJoins} WHERE ${filter} ORDER BY p.next_service_on NULLS LAST,p.renew_on NULLS LAST,p.id LIMIT 25 OFFSET $5`,[...values,(p-1)*25])).rows;
+  const total=(await db.query(`SELECT count(*)::int AS count FROM ${planJoins} WHERE ${filter}`,values)).rows[0].count;
+  const summary=(await db.query(`SELECT count(*) FILTER(WHERE p.status='active')::int AS active,
+   count(*) FILTER(WHERE p.status='active' AND p.next_service_on <= ${soon} AND coalesce(v.status,'')!='scheduled')::int AS service,
+   count(*) FILTER(WHERE p.status='active' AND v.status='scheduled')::int AS scheduled,
+   count(*) FILTER(WHERE p.status='active' AND p.renew_on <= ${soon})::int AS renewal,
+   count(*) FILTER(WHERE p.status='active' AND (p.next_service_on IS NULL OR p.renew_on IS NULL))::int AS missing FROM ${planJoins}`)).rows[0];
+  res.json({ok:true,plans,total,page:p,summary});
+ }));
+ router.get(base+'/plans/:id',wrap(async(req,res)=>{
+  await permitted(req);const plan=(await db.query(`SELECT ${planSelect} FROM ${planJoins} WHERE p.id=$1`,[uuid(req.params.id)])).rows[0];
+  if(!plan)fail(404,'Plan not found.');res.json({ok:true,plan});
+ }));
+ router.post(base+'/plans/:id/visit',wrap(async(req,res)=>{
+  await permitted(req);fields(req.body,[]);
+  const result=await db.transaction(async c=>{
+   const plan=(await c.query('SELECT * FROM maintenance_plans WHERE id=$1 FOR UPDATE',[uuid(req.params.id)])).rows[0];
+   if(!plan)fail(404,'Plan not found.');if(plan.status!=='active')fail(400,'Activate this plan before creating a visit.');
+   const existing=(await c.query("SELECT r.id FROM service_requests r WHERE maintenance_plan_id=$1 AND status!='cancelled' AND NOT EXISTS (SELECT 1 FROM equipment_service_history h WHERE h.request_id=r.id AND h.equipment_id=$2) ORDER BY CASE WHEN r.status='completed' THEN 1 ELSE 0 END,r.created_at DESC LIMIT 1",[plan.id,plan.equipment_id])).rows[0];
+   if(existing)return {id:existing.id,existing:true};
+   const e=await equipment(c,plan.equipment_id);const id=randomUUID();
+   await c.query(`INSERT INTO service_requests(id,account_id,address_id,service,description,preferred_day,maintenance_plan_id)
+    VALUES($1,$2,$3,'Seasonal tune-up',$4,$5,$6)`,[id,plan.account_id,e.address_id,('Maintenance visit: '+plan.name+' — '+e.name+'\n'+plan.notes).slice(0,3000),plan.next_service_on,plan.id]);
+   return {id,existing:false};
+  });res.json({ok:true,...result});
+ }));
+ router.post(base+'/plans/:id/complete-visit',wrap(async(req,res)=>{
+  const actor=await permitted(req);fields(req.body,['revision','request_id','serviced_on','next_service_on','technician','findings','work_performed','recommendations','internal_notes','document_id']);
+  const result=await db.transaction(async c=>{
+   const plan=(await c.query('SELECT * FROM maintenance_plans WHERE id=$1 FOR UPDATE',[uuid(req.params.id)])).rows[0];if(!plan)fail(404,'Plan not found.');
+   checkRevision(plan,req.body.revision);if(plan.status!=='active')fail(400,'Activate this plan before recording a visit.');
+   const request=(await c.query('SELECT * FROM service_requests WHERE id=$1 AND maintenance_plan_id=$2 FOR UPDATE',[uuid(req.body.request_id),plan.id])).rows[0];
+   if(!request||request.status==='cancelled'||(await c.query('SELECT id FROM equipment_service_history WHERE request_id=$1 AND equipment_id=$2',[request.id,plan.equipment_id])).rows.length)fail(409,'This visit is no longer open. Refresh the plan.');
+   const e=await equipment(c,plan.equipment_id),v=await historyData(c,{...req.body,request_id:request.id,service:('Maintenance: '+plan.name).slice(0,150)},e),next=day(req.body.next_service_on,true);
+   if(next<=v.serviced_on)fail(400,'The next service date must follow the completed visit.');
+   if(!v.work_performed)fail(400,'Record the work performed before completing this visit.');
+   const historyId=randomUUID();
+   await c.query(`INSERT INTO equipment_service_history(id,equipment_id,account_id,request_id,document_id,serviced_on,service,findings,work_performed,recommendations,internal_notes,technician,created_by,creation_hash)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[historyId,e.id,e.account_id,request.id,v.document_id,v.serviced_on,v.service,v.findings,v.work_performed,v.recommendations,v.internal_notes,v.technician,actor.id,hash(v)]);
+   await c.query("UPDATE service_requests SET status='completed',updated_at=now() WHERE id=$1",[request.id]);
+   await c.query('UPDATE maintenance_plans SET next_service_on=$1,revision=revision+1,updated_at=now() WHERE id=$2',[next,plan.id]);
+   let emailId=null;
+   if(e.email&&request.status!=='completed'){emailId=randomUUID();const payload=require('../emails').serviceUpdateEmail({...request,status:'completed',name:e.customer_name,portalUrl:e.verified_at?origin+'/account/dashboard#requests':null});
+    await c.query('INSERT INTO service_request_emails(id,request_id,recipient,payload) VALUES($1,$2,$3,$4)',[emailId,request.id,e.email,JSON.stringify(payload)]);}
+   return {history_id:historyId,emailId,no_email:!e.email};
+  });let email=result.no_email?'unavailable':'not_needed';if(result.emailId){email='queued';try{email=await notifications.deliver(result.emailId);}catch(_){}}
+  res.json({ok:true,history_id:result.history_id,email});
  }));
  router.post(base+'/plans',wrap(async(req,res)=>{
   const actor=await permitted(req);fields(req.body,['id',...planFields]);const id=uuid(req.body.id);

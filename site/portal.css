@@ -138,3 +138,17 @@ a.stat{display:block;color:var(--ink);text-decoration:none;transition:border-col
 }
 @media(max-width:380px){.portal-body .sidebar nav{grid-template-columns:minmax(0,1fr)}}
 @media(prefers-reduced-motion:reduce){.portal-body .nav-toggle svg{transition:none}}
+/* Maintenance work lists and visit actions. */
+.maintenance-guide{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px 24px;margin:0 0 24px;background:#eaf5fc;border:1px solid #c5deef;border-radius:14px}
+.maintenance-guide h2{margin:0 0 8px;font-size:20px;color:#153c60}
+.maintenance-guide p{margin:0;max-width:720px;color:#405b73;line-height:1.6}
+.maintenance-guide .button{flex-shrink:0}
+.maintenance-selected{outline:3px solid #4f9fcd;outline-offset:2px}
+.maintenance-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.maintenance-dates{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:15px 0;margin:12px 0;border-top:1px solid #dbe6ef;border-bottom:1px solid #dbe6ef}
+.maintenance-dates small,.maintenance-dates strong{display:block}
+.maintenance-dates small{font-size:10px;letter-spacing:.8px;margin-bottom:6px;color:#486279}
+.maintenance-card details{margin:12px 0}
+.maintenance-card summary{cursor:pointer;font-weight:700;color:#174f79}
+.maintenance-primary{padding-top:12px}
+@media(max-width:760px){.maintenance-guide{display:block;padding:18px}.maintenance-guide .button{margin-top:16px}.maintenance-cards{grid-template-columns:1fr}.maintenance-primary .button{flex:1 1 100%}}

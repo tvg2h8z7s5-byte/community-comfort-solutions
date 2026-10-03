@@ -91,7 +91,7 @@ test('password hashes are salted, checked safely and memory-heavy concurrency is
 test('SQL migration is repeatable; unique emails, token purposes and ownership foreign keys are enforced', async () => {
   await withAccounts(async ({ db }) => {
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 6);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 7);
     const id = randomUUID();
     await db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [id, 'one@example.test', 'fixture']);
     await assert.rejects(db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [randomUUID(), 'one@example.test', 'fixture']));
@@ -392,7 +392,7 @@ test('standalone billing deployment script applies once, grants the runtime role
   // Embedded PostgreSQL uses a fixed postgres database name; retain the production guard above.
   const script=originalScript.replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
   await db.query('CREATE ROLE ccs_app');
-  await db.query('DROP TABLE equipment_service_history,maintenance_plans,operations_emails,billing_payments,billing_documents,billing_counters,billing_settings,billing_pricebook');
+  await db.query('ALTER TABLE service_requests DROP COLUMN maintenance_plan_id');await db.query('DROP TABLE equipment_service_history,maintenance_plans,operations_emails,billing_payments,billing_documents,billing_counters,billing_settings,billing_pricebook');
   await db.query("DELETE FROM account_schema_migrations WHERE version='004_billing.sql'");
   await db.query(script);await db.query(script);
   assert.equal((await db.query("SELECT count(*)::int AS count FROM account_schema_migrations WHERE version='004_billing.sql'")).rows[0].count,1);
@@ -477,7 +477,7 @@ test('standalone operations migration is repeatable and grants only the required
   const fs=require('node:fs'),path=require('node:path');
   const original=fs.readFileSync(path.join(__dirname,'../scripts/apply-operations.sql'),'utf8');assert.match(original,/current_database\(\) <> 'ccs_business'/);
   const script=original.replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
-  await db.query('CREATE ROLE ccs_app');await db.query('DROP TABLE operations_emails,equipment_service_history,maintenance_plans');await db.query('ALTER TABLE billing_documents DROP COLUMN archived_at,DROP COLUMN duplicated_from_id');
+  await db.query('CREATE ROLE ccs_app');await db.query('ALTER TABLE service_requests DROP COLUMN maintenance_plan_id');await db.query('DROP TABLE operations_emails,equipment_service_history,maintenance_plans');await db.query('ALTER TABLE billing_documents DROP COLUMN archived_at,DROP COLUMN duplicated_from_id');
   await db.query("DELETE FROM account_schema_migrations WHERE version='005_operations.sql'");await db.query(script);await db.query(script);
   assert.equal((await db.query("SELECT count(*)::int AS count FROM account_schema_migrations WHERE version='005_operations.sql'")).rows[0].count,1);
   assert.equal((await db.query("SELECT has_table_privilege('ccs_app','billing_documents','DELETE') AS allowed")).rows[0].allowed,true);
@@ -557,4 +557,42 @@ test('standalone inquiry migration is repeatable, grants intake access and rejec
  const privileges=(await db.query("SELECT has_table_privilege('ccs_app','website_inquiries','SELECT,INSERT,UPDATE') AS access,has_table_privilege('ccs_app','website_inquiries','DELETE') AS deletion")).rows[0];assert.equal(privileges.access,true);assert.equal(privileges.deletion,false);
  await db.query("UPDATE account_schema_migrations SET checksum=$1 WHERE version='006_inquiries.sql'",['0'.repeat(64)]);
  await assert.rejects(db.query(script),/checksum differs/);await db.query('ROLLBACK');
+}));
+
+test('maintenance workspace creates one linked visit, completes history and next date atomically, and lists work priorities',()=>withAccounts(async({db,request,messages})=>{
+ const users={};for(const role of ['admin','customer','contractor']){const id=randomUUID(),raw=crypto.randomToken();await db.query('INSERT INTO customer_accounts(id,email,password_hash,verified_at,role,name,phone) VALUES($1,$2,$3,now(),$4,$5,$6)',[id,role+'-maintenance@example.test','fixture',role,role+' Example','917-555-0100']);await db.query("INSERT INTO account_sessions(session_hash,account_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",[crypto.tokenHash(raw),id]);const Cookie='__Host-ccs_session='+raw;const session=await(await request('session',undefined,{headers:{Cookie}})).json();users[role]={id,headers:{Cookie,'X-CSRF-Token':session.csrfToken}};}
+ const address=randomUUID(),system=randomUUID(),planId=randomUUID();await db.query('INSERT INTO customer_addresses(id,account_id,line1,city,region,postal_code) VALUES($1,$2,$3,$4,$5,$6)',[address,users.customer.id,'100 Main St','Old Bridge','NJ','08857']);await db.query('INSERT INTO customer_equipment(id,account_id,address_id,name,type) VALUES($1,$2,$3,$4,$5)',[system,users.customer.id,address,'Main furnace','Furnace']);
+ const op=(r,b,method)=>request('admin/operations/'+r,b,{headers:users.admin.headers,method});
+ const dates=(await db.query("SELECT ((now() AT TIME ZONE 'America/New_York')::date-1)::text AS yesterday,((now() AT TIME ZONE 'America/New_York')::date+180)::text AS next")).rows[0];
+ const plan={id:planId,equipment_id:system,name:'Essential',annual_cents:18900,status:'active',next_service_on:dates.yesterday,renew_on:dates.yesterday,reminder_days:14,email_reminders:false,notes:'Electrical checks and system health report'};assert.equal((await op('plans',plan)).status,201);
+ for(const role of ['customer','contractor'])assert.equal((await request('admin/operations/plans/'+planId+'/visit',{}, {headers:users[role].headers})).status,403);
+ assert.equal((await request('admin/operations/plans/'+planId+'/visit',{}, {headers:{Cookie:users.admin.headers.Cookie}})).status,403);
+ let list=await(await op('plans?view=service')).json();assert.equal(list.summary.service,1);assert.equal(list.summary.renewal,1);assert.equal(list.plans[0].phone,'917-555-0100');
+ const first=await(await op('plans/'+planId+'/visit',{})).json(),second=await(await op('plans/'+planId+'/visit',{})).json();assert.equal(first.id,second.id);assert.equal(second.existing,true);
+ assert.equal((await db.query('SELECT maintenance_plan_id FROM service_requests WHERE id=$1',[first.id])).rows[0].maintenance_plan_id,planId);
+ await request('admin/requests/'+first.id,{status:'scheduled',appointment_at:new Date(Date.now()+86400000).toISOString()},{headers:users.admin.headers,method:'PATCH'});
+ list=await(await op('plans?view=scheduled')).json();assert.equal(list.summary.scheduled,1);assert.equal(list.summary.service,0);assert.equal(list.plans[0].visit_id,first.id);
+ const complete={revision:1,request_id:first.id,serviced_on:dates.yesterday,next_service_on:dates.next,technician:'Robert',findings:'Connections checked',work_performed:'Cleaned heating elements',recommendations:'Replace filter',internal_notes:'Private',document_id:''};
+ assert.equal((await op('plans/'+planId+'/complete-visit',{...complete,next_service_on:dates.yesterday})).status,400);
+ assert.equal((await db.query('SELECT count(*)::int AS count FROM equipment_service_history')).rows[0].count,0);
+ const saved=await(await op('plans/'+planId+'/complete-visit',complete)).json();assert(saved.history_id);assert.equal(saved.email,'sent');
+ assert.equal((await op('plans/'+planId+'/complete-visit',complete)).status,409);
+ assert.equal((await db.query('SELECT status FROM service_requests WHERE id=$1',[first.id])).rows[0].status,'completed');
+ const updated=(await(await op('plans/'+planId)).json()).plan;assert.equal(updated.next_service_on.slice(0,10),dates.next);assert.equal(updated.renew_on.slice(0,10),dates.yesterday);assert.equal(updated.visit_id,null);
+ assert.equal((await db.query('SELECT count(*)::int AS count FROM equipment_service_history')).rows[0].count,1);
+ const history=await(await request('service-history',undefined,{headers:users.customer.headers})).json();assert(!JSON.stringify(history).includes('Private'));assert.equal(history.history[0].work_performed,complete.work_performed);
+ // Completing the queue first still allows recording its service history in maintenance.
+ const nextVisit=await(await op('plans/'+planId+'/visit',{})).json();assert.equal((await request('admin/requests/'+first.id,{status:'reviewing'},{headers:users.admin.headers,method:'PATCH'})).status,409);await request('admin/requests/'+nextVisit.id,{status:'completed'},{headers:users.admin.headers,method:'PATCH'});
+ const selected=(await(await op('plans/'+planId)).json()).plan;assert.equal(selected.visit_id,nextVisit.id);assert.equal(selected.visit_status,'completed');
+ const priorMail=messages.length;assert.equal((await op('plans/'+planId+'/complete-visit',{...complete,request_id:nextVisit.id,revision:updated.revision})).status,200);assert.equal(messages.length,priorMail);
+ // Phone-only records remain searchable across equipment and plan lists.
+ await db.query('UPDATE customer_accounts SET email=NULL WHERE id=$1',[users.customer.id]);assert.equal((await(await op('plans?search=customer')).json()).total,1);assert.equal((await(await op('equipment?search=Main')).json()).total,1);
+ const current=(await(await op('plans/'+planId)).json()).plan;await op('plans/'+planId,{...plan,id:undefined,revision:current.revision,status:'paused'},'PATCH');assert.equal((await op('plans/'+planId+'/visit',{})).status,400);assert.equal((await(await op('plans?status=')).json()).total,1);
+}));
+
+test('maintenance workflow migration is repeatable and preserves existing requests',()=>withAccounts(async({db})=>{
+ const fs=require('fs'),script=fs.readFileSync(require('path').join(__dirname,'../scripts/apply-maintenance-workflow.sql'),'utf8').replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
+ await db.query('ALTER TABLE service_requests DROP COLUMN maintenance_plan_id');await db.query("DELETE FROM account_schema_migrations WHERE version='007_maintenance_workflow.sql'");await db.query(script);await db.query(script);
+ assert.equal((await db.query("SELECT count(*)::int AS count FROM account_schema_migrations WHERE version='007_maintenance_workflow.sql'")).rows[0].count,1);
+ assert.equal((await db.query("SELECT count(*)::int AS count FROM pg_indexes WHERE indexname='service_requests_one_open_plan_visit'")).rows[0].count,1);
 }));
