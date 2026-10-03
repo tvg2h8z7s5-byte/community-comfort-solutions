@@ -44,7 +44,7 @@ function serviceUpdateEmail({name, service, status, customer_update, appointment
  const rows=[['Request reference',id],['Service',service],['Status',status],['Confirmed appointment',appointment],['Team response',customer_update]];
  const title='An update on your service request';
  return {subject:title+' — Community Comfort Solutions',
-  text:`Hi ${name||'there'},\n\nOur team updated your service request.\n\n${rows.filter(([,v])=>v).map(([k,v])=>k+': '+v).join('\n')}\n\nView your requests: ${portalUrl}\n\nReply to this email or call 917-608-3201 with questions.`,
-  html:layout(title,`<p>Hi ${escape(name||'there')},</p><p>Our team updated your service request.</p>${details(rows)}${button('View your requests',portalUrl)}`)};
+  text:`Hi ${name||'there'},\n\nOur team updated your service request.\n\n${rows.filter(([,v])=>v).map(([k,v])=>k+': '+v).join('\n')}\n\n${portalUrl?'View your requests: '+portalUrl:'You can reply directly to this email.'}\n\nReply to this email or call 917-608-3201 with questions.`,
+  html:layout(title,`<p>Hi ${escape(name||'there')},</p><p>Our team updated your service request.</p>${details(rows)}${portalUrl?button('View your requests',portalUrl):'<p>Reply to this email with any questions.</p>'}`)};
 }
 module.exports = {layout, details, accountEmail, receiptEmail, serviceUpdateEmail};

@@ -105,7 +105,8 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     await limits(req, 'register', address);
     const hash = await security.hashPassword(pass);
     const result = await db.query(`INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)
-      ON CONFLICT(email) DO NOTHING RETURNING id,email`, [randomUUID(), address, hash]);
+      ON CONFLICT(email) DO UPDATE SET password_hash=excluded.password_hash,verified_at=NULL,updated_at=now()
+      WHERE customer_accounts.password_hash='!guest' AND customer_accounts.role='customer' AND customer_accounts.state='active' RETURNING id,email`, [randomUUID(), address, hash]);
     if (result.rows.length) await notify(result.rows[0], 'verify');
     res.json(GENERIC);
   }));
@@ -114,10 +115,10 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
       fields(req.body, ['email']);
       const address = email(req.body.email);
       await limits(req, route, address);
-      const result = await db.query('SELECT id,email,verified_at,state FROM customer_accounts WHERE email=$1', [address]);
+      const result = await db.query('SELECT id,email,verified_at,state,password_hash FROM customer_accounts WHERE email=$1', [address]);
       const account = result.rows[0];
       // Same outbound-email budget check regardless of account eligibility.
-      if (account && account.state === 'active' && (purpose === 'reset' ? !!account.verified_at : !account.verified_at)) await notify(account, purpose);
+      if (account && account.password_hash !== '!guest' && account.state === 'active' && (purpose === 'reset' ? !!account.verified_at : !account.verified_at)) await notify(account, purpose);
       else await count('email', address, 6, 86400);
       res.json(GENERIC);
     }));
@@ -225,6 +226,7 @@ function createAccountRouter({ db, origin, secret, mailTransport, from }) {
     }
   } });
   const operationsMail=require('./operations-mail').createOperationsMail({db,mailTransport,from,origin});
+  require('./inquiries').installInquiries(router,{db,authenticated,fields,text,fail});
   require('./billing').installBilling(router, { db, authenticated, fields, fail, operationsMail });
   require('./operations').installOperations(router, {db,authenticated,fields,fail,operationsMail});
   const pages = express.Router();

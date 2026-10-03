@@ -163,7 +163,13 @@ app.post('/api/contact', limiter,
   const text = rows.map(([k, label]) => `${label}: ${data[k]}`).join('\n');
 
 
+  let inquirySaved=false;
   try {
+    // Persist ordinary inquiries before email; privacy requests remain email-only.
+    if(accountOptions && !String(body._subject||'').startsWith('Privacy request')){
+      await require('./accounts/inquiries').saveInquiry(accountOptions.db,data,String(body._subject||'').startsWith('New SERVICE REQUEST')?'service':'contact');
+      inquirySaved=true;
+    }
     await mailTransport.sendMail({
       from: SMTP_FROM,
       to: CONTACT_TO,
@@ -186,6 +192,7 @@ app.post('/api/contact', limiter,
   } catch (err) {
     // Never log the SMTP response/message: it can include credentials or customer data.
     console.error('Contact email delivery failed.');
+    if(inquirySaved)return res.json({ok:true});
     return res.status(502).json({ ok: false, error: 'We could not send your request. Please call 917-608-3201.' });
   }
 });
@@ -224,6 +231,7 @@ if (require.main === module) {
       // Fail closed if the explicitly migrated schema is unavailable.
       await db.query('SELECT id,role FROM customer_accounts LIMIT 0');
       await db.query('SELECT id FROM customer_equipment LIMIT 0');
+      await db.query('SELECT id FROM website_inquiries LIMIT 0');
       await db.query('SELECT id,priority,appointment_at,follow_up_on FROM service_requests LIMIT 0');
       await db.query('SELECT id FROM service_request_emails LIMIT 0');
       await db.query('SELECT token_hash FROM account_tokens LIMIT 0');

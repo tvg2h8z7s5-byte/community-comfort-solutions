@@ -91,7 +91,7 @@ test('password hashes are salted, checked safely and memory-heavy concurrency is
 test('SQL migration is repeatable; unique emails, token purposes and ownership foreign keys are enforced', async () => {
   await withAccounts(async ({ db }) => {
     await migrate(db);
-    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 5);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM account_schema_migrations')).rows[0].count, 6);
     const id = randomUUID();
     await db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [id, 'one@example.test', 'fixture']);
     await assert.rejects(db.query('INSERT INTO customer_accounts(id,email,password_hash) VALUES($1,$2,$3)', [randomUUID(), 'one@example.test', 'fixture']));
@@ -104,7 +104,7 @@ test('SQL migration is repeatable; unique emails, token purposes and ownership f
 test('read-only connection check accepts the runtime role and rejects administrator/migration access', async () => {
   await withAccounts(async ({ db }) => {
     await assert.rejects(checkDatabase(db), /restricted runtime/);
-    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails,billing_pricebook,billing_settings,billing_counters,billing_documents,billing_payments,equipment_service_history,maintenance_plans,operations_emails TO ccs_app');
+    await db.query('CREATE ROLE ccs_app; GRANT USAGE ON SCHEMA public TO ccs_app; GRANT SELECT ON customer_accounts,customer_addresses,account_tokens,account_sessions,account_rate_limits,customer_equipment,service_requests,service_request_emails,billing_pricebook,billing_settings,billing_counters,billing_documents,billing_payments,equipment_service_history,maintenance_plans,operations_emails,website_inquiries TO ccs_app');
     await db.query('SET ROLE ccs_app');
     const result = await checkDatabase(db);
     assert.equal(result.user, 'ccs_app');
@@ -507,3 +507,54 @@ test('catalog markup and annual package calculations match their scope',()=>{
  for(const key of ['essential','filter-care','humidity-care','complete','complete-humidity']){const item=n=>c.items.find(x=>x.key==='plan-'+key+'-'+n),extra=c.items.find(x=>x.key==='plan-'+key+'-additional');assert.equal(extra.unit_cents,Math.round(item(1).unit_cents*.9/100)*100);assert.equal(item(2).unit_cents,item(1).unit_cents+extra.unit_cents);assert.equal(item(3).unit_cents,item(1).unit_cents+2*extra.unit_cents);}
  assert.equal(c.items.find(x=>x.key==='heat-tune').unit_cents,10900);assert.equal(c.items.find(x=>x.key==='plan-essential-1').unit_cents,18900);
 });
+
+test('public intake persists before email, isolates roles, and atomically converts guest and existing customer work',()=>withAccounts(async({db,request,base,messages,setMailFailure,register,latestToken,login})=>{
+ const users={};for(const role of ['admin','customer','contractor']){const id=randomUUID(),raw=crypto.randomToken();await db.query('INSERT INTO customer_accounts(id,email,password_hash,verified_at,role) VALUES($1,$2,$3,now(),$4)',[id,role+'-intake@example.test','fixture',role]);await db.query("INSERT INTO account_sessions(session_hash,account_id,expires_at) VALUES($1,$2,now()+interval '1 hour')",[crypto.tokenHash(raw),id]);const Cookie='__Host-ccs_session='+raw;const session=await(await request('session',undefined,{headers:{Cookie}})).json();users[role]={Cookie,'X-CSRF-Token':session.csrfToken};}
+ const admin=(route,b,method)=>request('admin/inquiries'+route,b,{headers:users.admin,method});
+ const publicPost=b=>fetch(base+'/api/contact',{method:'POST',headers:{Origin:ORIGIN,'Content-Type':'application/json'},body:JSON.stringify(b)});
+ const form={name:'New Homeowner',email:'new-homeowner@example.test',phone:'917-555-0100',address:'10 Main St',town:'Old Bridge',system:'Heating',message:'No heat',_subject:'New SERVICE REQUEST'};
+ assert.equal((await publicPost(form)).status,200);assert.equal(messages.length,2);
+ const lead=(await(await admin('')).json()).inquiries[0];assert.equal(lead.data.address,form.address);assert.equal(lead.status,'new');
+ assert.equal((await request('admin/inquiries')).status,401);
+ for(const role of ['customer','contractor'])assert.equal((await request('admin/inquiries',undefined,{headers:users[role]})).status,403);
+ assert.equal((await request('admin/inquiries/'+lead.id,{status:'contacted'},{method:'PATCH',headers:{Cookie:users.admin.Cookie}})).status,403);
+ assert.equal((await admin('/'+lead.id,{status:'contacted',internal_notes:'Call tonight'},'PATCH')).status,200);
+ assert.equal((await admin('/'+lead.id,{status:'archived'},'PATCH')).status,200);
+ const conversion={name:form.name,email:form.email,phone:form.phone,line1:form.address,city:form.town,region:'NJ',postal_code:'08857',service:'Heating repair',description:form.message,account_id:''};
+ assert.equal((await admin('/'+lead.id+'/convert',conversion)).status,409);
+ await admin('/'+lead.id,{status:'new'},'PATCH');
+ const converted=await(await admin('/'+lead.id+'/convert',conversion)).json();assert(converted.id);assert(converted.account_id);
+ const again=await(await admin('/'+lead.id+'/convert',conversion)).json();assert.equal(again.id,converted.id);assert(again.already_converted);
+ assert.equal((await db.query('SELECT count(*)::int AS count FROM service_requests')).rows[0].count,1);
+ const guest=(await db.query('SELECT * FROM customer_accounts WHERE id=$1',[converted.account_id])).rows[0];assert.equal(guest.password_hash,'!guest');assert.equal(guest.verified_at,null);
+ assert.equal((await request('login',{email:form.email,password:PASSWORD})).status,401);
+ const mailCount=messages.length;await request('resend-verification',{email:form.email});assert.equal(messages.length,mailCount);
+ const update=await request('admin/requests/'+converted.id,{status:'reviewing',customer_update:'We can help tonight'},{method:'PATCH',headers:users.admin});assert.equal(update.status,200);assert.equal((await update.json()).email,'sent');assert(!messages.at(-1).text.includes('/account/dashboard'));
+ // Signup verifies ownership and retains the same record, address, and job.
+ await register(form.email);await request('verify-email',{token:latestToken()});const customer=await login(form.email);assert.equal(customer.account.id,converted.account_id);assert.equal((await(await request('requests',undefined,{headers:{Cookie:customer.cookie}})).json()).requests.length,1);
+ // Phone-only callers have usable records and never receive attempted email.
+ const phoneLead=await(await admin('',{name:'Phone caller',phone:'917-555-0111',email:'',town:'Old Bridge',address:'11 Main St',system:'Cooling',message:'Fan stopped'})).json();
+ const phoneJob=await(await admin('/'+phoneLead.id+'/convert',{...conversion,email:'',name:'Phone caller'})).json();assert(phoneJob.id);assert.equal((await db.query('SELECT email FROM customer_accounts WHERE id=$1',[phoneJob.account_id])).rows[0].email,null);
+ assert.equal((await request('admin/requests/'+phoneJob.id,{status:'reviewing'},{headers:users.admin,method:'PATCH'})).status,200);
+ assert.equal((await(await request('admin/accounts?search=Phone',undefined,{headers:users.admin})).json()).accounts.length,1);
+ // A submitted email does not silently attach unverified inquiry data to an existing account.
+ const duplicate=await(await admin('',{name:'Another request',email:form.email,message:'Maintenance'})).json();
+ assert.equal((await admin('/'+duplicate.id+'/convert',conversion)).status,409);
+ assert.equal((await admin('/'+duplicate.id+'/convert',{...conversion,account_id:converted.account_id})).status,200);
+ // Durable success even if notification mail fails; privacy and bots are excluded.
+ setMailFailure(true);assert.equal((await publicPost({...form,email:'mail-fail@example.test'})).status,200);setMailFailure(false);
+ const before=(await db.query('SELECT count(*)::int AS count FROM website_inquiries')).rows[0].count;
+ await publicPost({...form,_subject:'Privacy request'});await publicPost({...form,_gotcha:'bot'});
+ assert.equal((await db.query('SELECT count(*)::int AS count FROM website_inquiries')).rows[0].count,before);
+ assert((await(await request('admin/overview',undefined,{headers:users.admin})).json()).totals.inquiries>=1);
+}));
+
+test('standalone inquiry migration is repeatable, grants intake access and rejects changed checksums',()=>withAccounts(async({db})=>{
+ const fs=require('fs'),original=fs.readFileSync(require('path').join(__dirname,'../scripts/apply-inquiries.sql'),'utf8');
+ const script=original.replace(/^\\set.*\n/,'').replace("current_database() <> 'ccs_business'","current_database() <> 'postgres'");
+ await db.query('CREATE ROLE ccs_app');await db.query('DROP TABLE website_inquiries');await db.query('ALTER TABLE customer_accounts ALTER COLUMN email SET NOT NULL');await db.query("DELETE FROM account_schema_migrations WHERE version='006_inquiries.sql'");
+ await db.query(script);await db.query(script);
+ const privileges=(await db.query("SELECT has_table_privilege('ccs_app','website_inquiries','SELECT,INSERT,UPDATE') AS access,has_table_privilege('ccs_app','website_inquiries','DELETE') AS deletion")).rows[0];assert.equal(privileges.access,true);assert.equal(privileges.deletion,false);
+ await db.query("UPDATE account_schema_migrations SET checksum=$1 WHERE version='006_inquiries.sql'",['0'.repeat(64)]);
+ await assert.rejects(db.query(script),/checksum differs/);await db.query('ROLLBACK');
+}));

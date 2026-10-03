@@ -48,14 +48,14 @@ function installPortal(router, { db, authenticated, fields, text, fail, count, n
   const search=text(req.query.search,100), role=text(req.query.role,20);
   if(role && !['customer','contractor'].includes(role)) fail(400,'Invalid role filter.');
   const page=Number(req.query.page||1); if(!Number.isInteger(page)||page<1||page>100000) fail(400,'Invalid page.');
-  const filter=`role IN ('customer','contractor') AND ($1='' OR position(lower($1) in lower(email||' '||name||' '||phone))>0) AND ($2='' OR role=$2)`;
-  const result=await db.query(`SELECT id,email,name,phone,role,state,verified_at,created_at FROM customer_accounts WHERE ${filter} ORDER BY created_at DESC,id LIMIT 25 OFFSET $3`,[search,role,(page-1)*25]);
+  const filter=`role IN ('customer','contractor') AND ($1='' OR position(lower($1) in lower(coalesce(email,'')||' '||name||' '||phone))>0) AND ($2='' OR role=$2)`;
+  const result=await db.query(`SELECT id,email,name,phone,role,state,verified_at,(password_hash='!guest') AS guest,created_at FROM customer_accounts WHERE ${filter} ORDER BY created_at DESC,id LIMIT 25 OFFSET $3`,[search,role,(page-1)*25]);
   const total=(await db.query(`SELECT count(*)::int AS count FROM customer_accounts WHERE ${filter}`,[search,role])).rows[0].count;
   res.json({ok:true,accounts:result.rows,total,page});
  }));
  router.get('/admin/accounts/:id',wrap(async(req,res)=>{
   await permitted(req,'admin'); const id=uuid(req.params.id);
-  const account=(await db.query("SELECT id,email,name,phone,role,state,verified_at,created_at FROM customer_accounts WHERE id=$1 AND role IN ('customer','contractor')",[id])).rows[0];
+  const account=(await db.query("SELECT id,email,name,phone,role,state,verified_at,(password_hash='!guest') AS guest,created_at FROM customer_accounts WHERE id=$1 AND role IN ('customer','contractor')",[id])).rows[0];
   if(!account) fail(404,'Account not found.');
   const addresses=(await db.query('SELECT id,label,line1,line2,city,region,postal_code,country FROM customer_addresses WHERE account_id=$1 ORDER BY created_at,id',[id])).rows;
   const equipment=(await db.query('SELECT id,address_id,name,type,manufacturer,model,serial_number FROM customer_equipment WHERE account_id=$1 ORDER BY created_at,id',[id])).rows;
@@ -64,10 +64,11 @@ function installPortal(router, { db, authenticated, fields, text, fail, count, n
  }));
  router.get('/admin/overview',wrap(async(req,res)=>{
   await permitted(req,'admin');
-  const totals=(await db.query(`SELECT count(*) FILTER(WHERE role='customer')::int AS customers,count(*) FILTER(WHERE role='contractor')::int AS contractors,count(*) FILTER(WHERE verified_at IS NULL AND role!='admin')::int AS unverified FROM customer_accounts`)).rows[0];
+  const totals=(await db.query(`SELECT count(*) FILTER(WHERE role='customer')::int AS customers,count(*) FILTER(WHERE role='contractor')::int AS contractors,count(*) FILTER(WHERE verified_at IS NULL AND password_hash!='!guest' AND role!='admin')::int AS unverified FROM customer_accounts`)).rows[0];
   const queue=(await db.query(`SELECT count(*) FILTER(WHERE status='requested')::int AS requested,count(*) FILTER(WHERE status='scheduled')::int AS scheduled,count(*) FILTER(WHERE status IN ('completed','cancelled'))::int AS resolved,count(*) FILTER(WHERE status NOT IN ('completed','cancelled') AND follow_up_on <= (now() AT TIME ZONE 'America/New_York')::date)::int AS followups FROM service_requests`)).rows[0];
   const pending=(await db.query('SELECT count(*)::int AS count FROM service_request_emails WHERE sent_at IS NULL')).rows[0].count;
-  res.json({ok:true,totals:{...totals,...queue,pending}});
+  const inquiries=(await db.query("SELECT count(*)::int AS count FROM website_inquiries WHERE status='new'")).rows[0].count;
+  res.json({ok:true,totals:{...totals,...queue,pending,inquiries}});
  }));
  router.post('/admin/requests',wrap(async(req,res)=>{
   await permitted(req,'admin');fields(req.body,['account_id','address_id','service','description']);
@@ -100,6 +101,11 @@ function installPortal(router, { db, authenticated, fields, text, fail, count, n
   const total=(await db.query(`SELECT count(*)::int AS count FROM service_requests r WHERE ${filter}`,[status])).rows[0].count;
   res.json({ok:true,requests,total,page});
  }));
+ router.get('/admin/requests/:id',wrap(async(req,res)=>{
+  await permitted(req,'admin');
+  const record=(await db.query('SELECT r.*,a.name,a.email,a.phone,d.line1,d.city FROM service_requests r JOIN customer_accounts a ON a.id=r.account_id JOIN customer_addresses d ON d.id=r.address_id WHERE r.id=$1',[uuid(req.params.id)])).rows[0];
+  if(!record)fail(404,'Request not found.');res.json({ok:true,request:record});
+ }));
  router.patch('/admin/requests/:id',wrap(async(req,res)=>{
   await permitted(req,'admin'); fields(req.body,['status','customer_update','internal_notes','priority','appointment_at','follow_up_on']);
   if(!statuses.includes(req.body.status)) fail(400,'Select a status.');
@@ -117,13 +123,14 @@ function installPortal(router, { db, authenticated, fields, text, fail, count, n
     [body.status,body.customer_update===undefined?old.customer_update:customerUpdate,body.internal_notes===undefined?old.internal_notes:notes,body.priority||old.priority,appointment,body.follow_up_on===undefined?old.follow_up_on:body.follow_up_on||null,id])).rows[0];
    const changed=old.status!==row.status || (row.customer_update && old.customer_update!==row.customer_update) || String(old.appointment_at||'')!==String(row.appointment_at||'');
    if(!changed)return null;
-   const account=(await client.query('SELECT name,email FROM customer_accounts WHERE id=$1',[row.account_id])).rows[0];
+   const account=(await client.query('SELECT name,email,password_hash FROM customer_accounts WHERE id=$1',[row.account_id])).rows[0];
+   if(!account.email)return 'no_email';
    const emailId=randomUUID();
-   await client.query('INSERT INTO service_request_emails(id,request_id,recipient,payload) VALUES($1,$2,$3,$4)',[emailId,id,account.email,JSON.stringify(serviceUpdateEmail({...row,name:account.name,portalUrl:origin+'/account/dashboard#requests'}))]);
+   await client.query('INSERT INTO service_request_emails(id,request_id,recipient,payload) VALUES($1,$2,$3,$4)',[emailId,id,account.email,JSON.stringify(serviceUpdateEmail({...row,name:account.name,portalUrl:account.password_hash==='!guest'?null:origin+'/account/dashboard#requests'}))]);
    return emailId;
   });
-  let email='not_needed';
-  if(emailId){try{email=await notifications.deliver(emailId);}catch(_){email='queued';}}
+  let email=emailId==='no_email'?'unavailable':'not_needed';
+  if(emailId && emailId!=='no_email'){try{email=await notifications.deliver(emailId);}catch(_){email='queued';}}
   res.json({ok:true,email});
  }));
 }

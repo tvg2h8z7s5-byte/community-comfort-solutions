@@ -71,7 +71,7 @@ function installBilling(router,{db,authenticated,fields,fail,operationsMail}) {
  }));
  router.get(base+'/customers',wrap(async(req,res)=>{
   await permitted(req);const search=plain(req.query.search,100);
-  const customers=(await db.query(`SELECT id,name,email,phone FROM customer_accounts WHERE role='customer' AND ($1='' OR position(lower($1) in lower(name||' '||email||' '||phone))>0) ORDER BY name,email LIMIT 50`,[search])).rows;
+  const customers=(await db.query(`SELECT id,name,email,phone FROM customer_accounts WHERE role='customer' AND ($1='' OR position(lower($1) in lower(name||' '||coalesce(email,'')||' '||phone))>0) ORDER BY name,email LIMIT 50`,[search])).rows;
   res.json({ok:true,customers});
  }));
  router.get(base+'/pricebook-catalog',wrap(async(req,res)=>{
