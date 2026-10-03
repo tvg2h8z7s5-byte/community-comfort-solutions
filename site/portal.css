@@ -119,3 +119,22 @@ a.stat{display:block;color:var(--ink);text-decoration:none;transition:border-col
 .portal-body .catalog-item summary{cursor:pointer;font-weight:800;color:#145f98;padding:8px 0}
 .portal-body .catalog-item .check-label{font-size:14px!important;align-items:flex-start}
 .portal-body .catalog-item details a{font-weight:700;text-decoration:underline}
+
+/* Clean outline navigation and a collapsible mobile menu. */
+.portal-body .sidebar .nav-icon{display:flex;align-items:center;justify-content:center;width:22px;height:22px;flex:0 0 22px}
+.portal-body .sidebar .nav-icon svg{display:block;width:20px;height:20px;stroke-width:2}
+.portal-body .nav-toggle{display:none}
+@media(max-width:760px){
+ .portal-body .sidebar-menu-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:15px 0 0}
+ .portal-body .sidebar-menu-head .sidebar-label{margin:0;flex:1;min-width:0;letter-spacing:1px}
+ .portal-body .sidebar-label::after{content:none}
+ .portal-body .nav-toggle{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:9px 12px;background:#e8f5ff;color:#10375f;border:1px solid #b6ddf7;border-radius:9px;font-weight:800;font-size:13px;flex-shrink:0}
+ .portal-body .nav-toggle svg{width:18px;height:18px;transition:transform .16s}
+ .portal-body .nav-toggle[aria-expanded=true] svg{transform:rotate(180deg)}
+ .portal-body .sidebar nav{display:none;overflow:visible;margin-top:14px;padding:3px;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+ .portal-body .sidebar.nav-open nav{display:grid}
+ .portal-body .sidebar nav a{white-space:normal;min-width:0;min-height:48px;padding:11px 12px;gap:10px}
+ .portal-body .sidebar nav a.active{box-shadow:inset 4px 0 0 #57b8ee}
+}
+@media(max-width:380px){.portal-body .sidebar nav{grid-template-columns:minmax(0,1fr)}}
+@media(prefers-reduced-motion:reduce){.portal-body .nav-toggle svg{transition:none}}
